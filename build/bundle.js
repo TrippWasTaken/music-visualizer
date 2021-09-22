@@ -35,6 +35,41 @@ var app = (function () {
     function is_empty(obj) {
         return Object.keys(obj).length === 0;
     }
+
+    const is_client = typeof window !== 'undefined';
+    let now$1 = is_client
+        ? () => window.performance.now()
+        : () => Date.now();
+    let raf = is_client ? cb => requestAnimationFrame(cb) : noop;
+
+    const tasks = new Set();
+    function run_tasks(now) {
+        tasks.forEach(task => {
+            if (!task.c(now)) {
+                tasks.delete(task);
+                task.f();
+            }
+        });
+        if (tasks.size !== 0)
+            raf(run_tasks);
+    }
+    /**
+     * Creates a new task that runs on each raf frame
+     * until it returns a falsy value or is aborted
+     */
+    function loop(callback) {
+        let task;
+        if (tasks.size === 0)
+            raf(run_tasks);
+        return {
+            promise: new Promise(fulfill => {
+                tasks.add(task = { c: callback, f: fulfill });
+            }),
+            abort() {
+                tasks.delete(task);
+            }
+        };
+    }
     function append(target, node) {
         target.appendChild(node);
     }
@@ -43,6 +78,12 @@ var app = (function () {
     }
     function detach(node) {
         node.parentNode.removeChild(node);
+    }
+    function destroy_each(iterations, detaching) {
+        for (let i = 0; i < iterations.length; i += 1) {
+            if (iterations[i])
+                iterations[i].d(detaching);
+        }
     }
     function element(name) {
         return document.createElement(name);
@@ -65,6 +106,62 @@ var app = (function () {
     }
     function children(element) {
         return Array.from(element.childNodes);
+    }
+    function set_style(node, key, value, important) {
+        node.style.setProperty(key, value, important ? 'important' : '');
+    }
+    // unfortunately this can't be a constant as that wouldn't be tree-shakeable
+    // so we cache the result instead
+    let crossorigin;
+    function is_crossorigin() {
+        if (crossorigin === undefined) {
+            crossorigin = false;
+            try {
+                if (typeof window !== 'undefined' && window.parent) {
+                    void window.parent.document;
+                }
+            }
+            catch (error) {
+                crossorigin = true;
+            }
+        }
+        return crossorigin;
+    }
+    function add_resize_listener(node, fn) {
+        const computed_style = getComputedStyle(node);
+        if (computed_style.position === 'static') {
+            node.style.position = 'relative';
+        }
+        const iframe = element('iframe');
+        iframe.setAttribute('style', 'display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; ' +
+            'overflow: hidden; border: 0; opacity: 0; pointer-events: none; z-index: -1;');
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.tabIndex = -1;
+        const crossorigin = is_crossorigin();
+        let unsubscribe;
+        if (crossorigin) {
+            iframe.src = "data:text/html,<script>onresize=function(){parent.postMessage(0,'*')}</script>";
+            unsubscribe = listen(window, 'message', (event) => {
+                if (event.source === iframe.contentWindow)
+                    fn();
+            });
+        }
+        else {
+            iframe.src = 'about:blank';
+            iframe.onload = () => {
+                unsubscribe = listen(iframe.contentWindow, 'resize', fn);
+            };
+        }
+        append(node, iframe);
+        return () => {
+            if (crossorigin) {
+                unsubscribe();
+            }
+            else if (unsubscribe && iframe.contentWindow) {
+                unsubscribe();
+            }
+            detach(iframe);
+        };
     }
     function custom_event(type, detail, bubbles = false) {
         const e = document.createEvent('CustomEvent');
@@ -149,11 +246,44 @@ var app = (function () {
         }
     }
     const outroing = new Set();
+    let outros;
+    function group_outros() {
+        outros = {
+            r: 0,
+            c: [],
+            p: outros // parent group
+        };
+    }
+    function check_outros() {
+        if (!outros.r) {
+            run_all(outros.c);
+        }
+        outros = outros.p;
+    }
     function transition_in(block, local) {
         if (block && block.i) {
             outroing.delete(block);
             block.i(local);
         }
+    }
+    function transition_out(block, local, detach, callback) {
+        if (block && block.o) {
+            if (outroing.has(block))
+                return;
+            outroing.add(block);
+            outros.c.push(() => {
+                outroing.delete(block);
+                if (callback) {
+                    if (detach)
+                        block.d(1);
+                    callback();
+                }
+            });
+            block.o(local);
+        }
+    }
+    function create_component(block) {
+        block && block.c();
     }
     function mount_component(component, target, anchor, customElement) {
         const { fragment, on_mount, on_destroy, after_update } = component.$$;
@@ -315,6 +445,22 @@ var app = (function () {
             dispatch_dev('SvelteDOMRemoveAttribute', { node, attribute });
         else
             dispatch_dev('SvelteDOMSetAttribute', { node, attribute, value });
+    }
+    function set_data_dev(text, data) {
+        data = '' + data;
+        if (text.wholeText === data)
+            return;
+        dispatch_dev('SvelteDOMSetData', { node: text, data });
+        text.data = data;
+    }
+    function validate_each_argument(arg) {
+        if (typeof arg !== 'string' && !(arg && typeof arg === 'object' && 'length' in arg)) {
+            let msg = '{#each} only iterates over array-like objects.';
+            if (typeof Symbol === 'function' && arg && Symbol.iterator in arg) {
+                msg += ' You can use a spread to convert this iterable into an array.';
+            }
+            throw new Error(msg);
+        }
     }
     function validate_slots(name, slot, keys) {
         for (const slot_key of Object.keys(slot)) {
@@ -28037,7 +28183,7 @@ var app = (function () {
 
     SpriteMaterial.prototype.isSpriteMaterial = true;
 
-    let _geometry;
+    let _geometry$2;
 
     const _intersectPoint = /*@__PURE__*/ new Vector3();
     const _worldScale = /*@__PURE__*/ new Vector3();
@@ -28063,9 +28209,9 @@ var app = (function () {
 
     		this.type = 'Sprite';
 
-    		if ( _geometry === undefined ) {
+    		if ( _geometry$2 === undefined ) {
 
-    			_geometry = new BufferGeometry();
+    			_geometry$2 = new BufferGeometry();
 
     			const float32Array = new Float32Array( [
     				- 0.5, - 0.5, 0, 0, 0,
@@ -28076,13 +28222,13 @@ var app = (function () {
 
     			const interleavedBuffer = new InterleavedBuffer( float32Array, 5 );
 
-    			_geometry.setIndex( [ 0, 1, 2,	0, 2, 3 ] );
-    			_geometry.setAttribute( 'position', new InterleavedBufferAttribute( interleavedBuffer, 3, 0, false ) );
-    			_geometry.setAttribute( 'uv', new InterleavedBufferAttribute( interleavedBuffer, 2, 3, false ) );
+    			_geometry$2.setIndex( [ 0, 1, 2,	0, 2, 3 ] );
+    			_geometry$2.setAttribute( 'position', new InterleavedBufferAttribute( interleavedBuffer, 3, 0, false ) );
+    			_geometry$2.setAttribute( 'uv', new InterleavedBufferAttribute( interleavedBuffer, 2, 3, false ) );
 
     		}
 
-    		this.geometry = _geometry;
+    		this.geometry = _geometry$2;
     		this.material = ( material !== undefined ) ? material : new SpriteMaterial();
 
     		this.center = new Vector2( 0.5, 0.5 );
@@ -47728,7 +47874,7 @@ var app = (function () {
     }
 
     const _vector = /*@__PURE__*/ new Vector3();
-    const _camera = /*@__PURE__*/ new Camera();
+    const _camera$1 = /*@__PURE__*/ new Camera();
 
     /**
      *	- shows frustum, line of sight and up of the camera
@@ -47855,44 +48001,44 @@ var app = (function () {
     		// we need just camera projection matrix inverse
     		// world matrix must be identity
 
-    		_camera.projectionMatrixInverse.copy( this.camera.projectionMatrixInverse );
+    		_camera$1.projectionMatrixInverse.copy( this.camera.projectionMatrixInverse );
 
     		// center / target
 
-    		setPoint( 'c', pointMap, geometry, _camera, 0, 0, - 1 );
-    		setPoint( 't', pointMap, geometry, _camera, 0, 0, 1 );
+    		setPoint( 'c', pointMap, geometry, _camera$1, 0, 0, - 1 );
+    		setPoint( 't', pointMap, geometry, _camera$1, 0, 0, 1 );
 
     		// near
 
-    		setPoint( 'n1', pointMap, geometry, _camera, - w, - h, - 1 );
-    		setPoint( 'n2', pointMap, geometry, _camera, w, - h, - 1 );
-    		setPoint( 'n3', pointMap, geometry, _camera, - w, h, - 1 );
-    		setPoint( 'n4', pointMap, geometry, _camera, w, h, - 1 );
+    		setPoint( 'n1', pointMap, geometry, _camera$1, - w, - h, - 1 );
+    		setPoint( 'n2', pointMap, geometry, _camera$1, w, - h, - 1 );
+    		setPoint( 'n3', pointMap, geometry, _camera$1, - w, h, - 1 );
+    		setPoint( 'n4', pointMap, geometry, _camera$1, w, h, - 1 );
 
     		// far
 
-    		setPoint( 'f1', pointMap, geometry, _camera, - w, - h, 1 );
-    		setPoint( 'f2', pointMap, geometry, _camera, w, - h, 1 );
-    		setPoint( 'f3', pointMap, geometry, _camera, - w, h, 1 );
-    		setPoint( 'f4', pointMap, geometry, _camera, w, h, 1 );
+    		setPoint( 'f1', pointMap, geometry, _camera$1, - w, - h, 1 );
+    		setPoint( 'f2', pointMap, geometry, _camera$1, w, - h, 1 );
+    		setPoint( 'f3', pointMap, geometry, _camera$1, - w, h, 1 );
+    		setPoint( 'f4', pointMap, geometry, _camera$1, w, h, 1 );
 
     		// up
 
-    		setPoint( 'u1', pointMap, geometry, _camera, w * 0.7, h * 1.1, - 1 );
-    		setPoint( 'u2', pointMap, geometry, _camera, - w * 0.7, h * 1.1, - 1 );
-    		setPoint( 'u3', pointMap, geometry, _camera, 0, h * 2, - 1 );
+    		setPoint( 'u1', pointMap, geometry, _camera$1, w * 0.7, h * 1.1, - 1 );
+    		setPoint( 'u2', pointMap, geometry, _camera$1, - w * 0.7, h * 1.1, - 1 );
+    		setPoint( 'u3', pointMap, geometry, _camera$1, 0, h * 2, - 1 );
 
     		// cross
 
-    		setPoint( 'cf1', pointMap, geometry, _camera, - w, 0, 1 );
-    		setPoint( 'cf2', pointMap, geometry, _camera, w, 0, 1 );
-    		setPoint( 'cf3', pointMap, geometry, _camera, 0, - h, 1 );
-    		setPoint( 'cf4', pointMap, geometry, _camera, 0, h, 1 );
+    		setPoint( 'cf1', pointMap, geometry, _camera$1, - w, 0, 1 );
+    		setPoint( 'cf2', pointMap, geometry, _camera$1, w, 0, 1 );
+    		setPoint( 'cf3', pointMap, geometry, _camera$1, 0, - h, 1 );
+    		setPoint( 'cf4', pointMap, geometry, _camera$1, 0, h, 1 );
 
-    		setPoint( 'cn1', pointMap, geometry, _camera, - w, 0, - 1 );
-    		setPoint( 'cn2', pointMap, geometry, _camera, w, 0, - 1 );
-    		setPoint( 'cn3', pointMap, geometry, _camera, 0, - h, - 1 );
-    		setPoint( 'cn4', pointMap, geometry, _camera, 0, h, - 1 );
+    		setPoint( 'cn1', pointMap, geometry, _camera$1, - w, 0, - 1 );
+    		setPoint( 'cn2', pointMap, geometry, _camera$1, w, 0, - 1 );
+    		setPoint( 'cn3', pointMap, geometry, _camera$1, 0, - h, - 1 );
+    		setPoint( 'cn4', pointMap, geometry, _camera$1, 0, h, - 1 );
 
     		geometry.getAttribute( 'position' ).needsUpdate = true;
 
@@ -50667,73 +50813,1076 @@ var app = (function () {
         sRGBEncoding: sRGBEncoding
     });
 
-    /* src\App.svelte generated by Svelte v3.42.6 */
-    const file = "src\\App.svelte";
+    /**
+     * Full-screen textured quad shader
+     */
 
-    function create_fragment(ctx) {
+    var CopyShader = {
+
+    	uniforms: {
+
+    		'tDiffuse': { value: null },
+    		'opacity': { value: 1.0 }
+
+    	},
+
+    	vertexShader: /* glsl */`
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vUv = uv;
+			gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+		}`,
+
+    	fragmentShader: /* glsl */`
+
+		uniform float opacity;
+
+		uniform sampler2D tDiffuse;
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vec4 texel = texture2D( tDiffuse, vUv );
+			gl_FragColor = opacity * texel;
+
+		}`
+
+    };
+
+    class Pass {
+
+    	constructor() {
+
+    		// if set to true, the pass is processed by the composer
+    		this.enabled = true;
+
+    		// if set to true, the pass indicates to swap read and write buffer after rendering
+    		this.needsSwap = true;
+
+    		// if set to true, the pass clears its buffer before rendering
+    		this.clear = false;
+
+    		// if set to true, the result of the pass is rendered to screen. This is set automatically by EffectComposer.
+    		this.renderToScreen = false;
+
+    	}
+
+    	setSize( /* width, height */ ) {}
+
+    	render( /* renderer, writeBuffer, readBuffer, deltaTime, maskActive */ ) {
+
+    		console.error( 'THREE.Pass: .render() must be implemented in derived pass.' );
+
+    	}
+
+    }
+
+    // Helper for passes that need to fill the viewport with a single quad.
+
+    const _camera = new OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+
+    // https://github.com/mrdoob/three.js/pull/21358
+
+    const _geometry$1 = new BufferGeometry();
+    _geometry$1.setAttribute( 'position', new Float32BufferAttribute( [ - 1, 3, 0, - 1, - 1, 0, 3, - 1, 0 ], 3 ) );
+    _geometry$1.setAttribute( 'uv', new Float32BufferAttribute( [ 0, 2, 0, 0, 2, 0 ], 2 ) );
+
+    class FullScreenQuad {
+
+    	constructor( material ) {
+
+    		this._mesh = new Mesh( _geometry$1, material );
+
+    	}
+
+    	dispose() {
+
+    		this._mesh.geometry.dispose();
+
+    	}
+
+    	render( renderer ) {
+
+    		renderer.render( this._mesh, _camera );
+
+    	}
+
+    	get material() {
+
+    		return this._mesh.material;
+
+    	}
+
+    	set material( value ) {
+
+    		this._mesh.material = value;
+
+    	}
+
+    }
+
+    class ShaderPass extends Pass {
+
+    	constructor( shader, textureID ) {
+
+    		super();
+
+    		this.textureID = ( textureID !== undefined ) ? textureID : 'tDiffuse';
+
+    		if ( shader instanceof ShaderMaterial ) {
+
+    			this.uniforms = shader.uniforms;
+
+    			this.material = shader;
+
+    		} else if ( shader ) {
+
+    			this.uniforms = UniformsUtils.clone( shader.uniforms );
+
+    			this.material = new ShaderMaterial( {
+
+    				defines: Object.assign( {}, shader.defines ),
+    				uniforms: this.uniforms,
+    				vertexShader: shader.vertexShader,
+    				fragmentShader: shader.fragmentShader
+
+    			} );
+
+    		}
+
+    		this.fsQuad = new FullScreenQuad( this.material );
+
+    	}
+
+    	render( renderer, writeBuffer, readBuffer /*, deltaTime, maskActive */ ) {
+
+    		if ( this.uniforms[ this.textureID ] ) {
+
+    			this.uniforms[ this.textureID ].value = readBuffer.texture;
+
+    		}
+
+    		this.fsQuad.material = this.material;
+
+    		if ( this.renderToScreen ) {
+
+    			renderer.setRenderTarget( null );
+    			this.fsQuad.render( renderer );
+
+    		} else {
+
+    			renderer.setRenderTarget( writeBuffer );
+    			// TODO: Avoid using autoClear properties, see https://github.com/mrdoob/three.js/pull/15571#issuecomment-465669600
+    			if ( this.clear ) renderer.clear( renderer.autoClearColor, renderer.autoClearDepth, renderer.autoClearStencil );
+    			this.fsQuad.render( renderer );
+
+    		}
+
+    	}
+
+    }
+
+    class MaskPass extends Pass {
+
+    	constructor( scene, camera ) {
+
+    		super();
+
+    		this.scene = scene;
+    		this.camera = camera;
+
+    		this.clear = true;
+    		this.needsSwap = false;
+
+    		this.inverse = false;
+
+    	}
+
+    	render( renderer, writeBuffer, readBuffer /*, deltaTime, maskActive */ ) {
+
+    		const context = renderer.getContext();
+    		const state = renderer.state;
+
+    		// don't update color or depth
+
+    		state.buffers.color.setMask( false );
+    		state.buffers.depth.setMask( false );
+
+    		// lock buffers
+
+    		state.buffers.color.setLocked( true );
+    		state.buffers.depth.setLocked( true );
+
+    		// set up stencil
+
+    		let writeValue, clearValue;
+
+    		if ( this.inverse ) {
+
+    			writeValue = 0;
+    			clearValue = 1;
+
+    		} else {
+
+    			writeValue = 1;
+    			clearValue = 0;
+
+    		}
+
+    		state.buffers.stencil.setTest( true );
+    		state.buffers.stencil.setOp( context.REPLACE, context.REPLACE, context.REPLACE );
+    		state.buffers.stencil.setFunc( context.ALWAYS, writeValue, 0xffffffff );
+    		state.buffers.stencil.setClear( clearValue );
+    		state.buffers.stencil.setLocked( true );
+
+    		// draw into the stencil buffer
+
+    		renderer.setRenderTarget( readBuffer );
+    		if ( this.clear ) renderer.clear();
+    		renderer.render( this.scene, this.camera );
+
+    		renderer.setRenderTarget( writeBuffer );
+    		if ( this.clear ) renderer.clear();
+    		renderer.render( this.scene, this.camera );
+
+    		// unlock color and depth buffer for subsequent rendering
+
+    		state.buffers.color.setLocked( false );
+    		state.buffers.depth.setLocked( false );
+
+    		// only render where stencil is set to 1
+
+    		state.buffers.stencil.setLocked( false );
+    		state.buffers.stencil.setFunc( context.EQUAL, 1, 0xffffffff ); // draw if == 1
+    		state.buffers.stencil.setOp( context.KEEP, context.KEEP, context.KEEP );
+    		state.buffers.stencil.setLocked( true );
+
+    	}
+
+    }
+
+    class ClearMaskPass extends Pass {
+
+    	constructor() {
+
+    		super();
+
+    		this.needsSwap = false;
+
+    	}
+
+    	render( renderer /*, writeBuffer, readBuffer, deltaTime, maskActive */ ) {
+
+    		renderer.state.buffers.stencil.setLocked( false );
+    		renderer.state.buffers.stencil.setTest( false );
+
+    	}
+
+    }
+
+    class EffectComposer {
+
+    	constructor( renderer, renderTarget ) {
+
+    		this.renderer = renderer;
+
+    		if ( renderTarget === undefined ) {
+
+    			const parameters = {
+    				minFilter: LinearFilter,
+    				magFilter: LinearFilter,
+    				format: RGBAFormat
+    			};
+
+    			const size = renderer.getSize( new Vector2() );
+    			this._pixelRatio = renderer.getPixelRatio();
+    			this._width = size.width;
+    			this._height = size.height;
+
+    			renderTarget = new WebGLRenderTarget( this._width * this._pixelRatio, this._height * this._pixelRatio, parameters );
+    			renderTarget.texture.name = 'EffectComposer.rt1';
+
+    		} else {
+
+    			this._pixelRatio = 1;
+    			this._width = renderTarget.width;
+    			this._height = renderTarget.height;
+
+    		}
+
+    		this.renderTarget1 = renderTarget;
+    		this.renderTarget2 = renderTarget.clone();
+    		this.renderTarget2.texture.name = 'EffectComposer.rt2';
+
+    		this.writeBuffer = this.renderTarget1;
+    		this.readBuffer = this.renderTarget2;
+
+    		this.renderToScreen = true;
+
+    		this.passes = [];
+
+    		// dependencies
+
+    		if ( CopyShader === undefined ) {
+
+    			console.error( 'THREE.EffectComposer relies on CopyShader' );
+
+    		}
+
+    		if ( ShaderPass === undefined ) {
+
+    			console.error( 'THREE.EffectComposer relies on ShaderPass' );
+
+    		}
+
+    		this.copyPass = new ShaderPass( CopyShader );
+
+    		this.clock = new Clock();
+
+    	}
+
+    	swapBuffers() {
+
+    		const tmp = this.readBuffer;
+    		this.readBuffer = this.writeBuffer;
+    		this.writeBuffer = tmp;
+
+    	}
+
+    	addPass( pass ) {
+
+    		this.passes.push( pass );
+    		pass.setSize( this._width * this._pixelRatio, this._height * this._pixelRatio );
+
+    	}
+
+    	insertPass( pass, index ) {
+
+    		this.passes.splice( index, 0, pass );
+    		pass.setSize( this._width * this._pixelRatio, this._height * this._pixelRatio );
+
+    	}
+
+    	removePass( pass ) {
+
+    		const index = this.passes.indexOf( pass );
+
+    		if ( index !== - 1 ) {
+
+    			this.passes.splice( index, 1 );
+
+    		}
+
+    	}
+
+    	isLastEnabledPass( passIndex ) {
+
+    		for ( let i = passIndex + 1; i < this.passes.length; i ++ ) {
+
+    			if ( this.passes[ i ].enabled ) {
+
+    				return false;
+
+    			}
+
+    		}
+
+    		return true;
+
+    	}
+
+    	render( deltaTime ) {
+
+    		// deltaTime value is in seconds
+
+    		if ( deltaTime === undefined ) {
+
+    			deltaTime = this.clock.getDelta();
+
+    		}
+
+    		const currentRenderTarget = this.renderer.getRenderTarget();
+
+    		let maskActive = false;
+
+    		for ( let i = 0, il = this.passes.length; i < il; i ++ ) {
+
+    			const pass = this.passes[ i ];
+
+    			if ( pass.enabled === false ) continue;
+
+    			pass.renderToScreen = ( this.renderToScreen && this.isLastEnabledPass( i ) );
+    			pass.render( this.renderer, this.writeBuffer, this.readBuffer, deltaTime, maskActive );
+
+    			if ( pass.needsSwap ) {
+
+    				if ( maskActive ) {
+
+    					const context = this.renderer.getContext();
+    					const stencil = this.renderer.state.buffers.stencil;
+
+    					//context.stencilFunc( context.NOTEQUAL, 1, 0xffffffff );
+    					stencil.setFunc( context.NOTEQUAL, 1, 0xffffffff );
+
+    					this.copyPass.render( this.renderer, this.writeBuffer, this.readBuffer, deltaTime );
+
+    					//context.stencilFunc( context.EQUAL, 1, 0xffffffff );
+    					stencil.setFunc( context.EQUAL, 1, 0xffffffff );
+
+    				}
+
+    				this.swapBuffers();
+
+    			}
+
+    			if ( MaskPass !== undefined ) {
+
+    				if ( pass instanceof MaskPass ) {
+
+    					maskActive = true;
+
+    				} else if ( pass instanceof ClearMaskPass ) {
+
+    					maskActive = false;
+
+    				}
+
+    			}
+
+    		}
+
+    		this.renderer.setRenderTarget( currentRenderTarget );
+
+    	}
+
+    	reset( renderTarget ) {
+
+    		if ( renderTarget === undefined ) {
+
+    			const size = this.renderer.getSize( new Vector2() );
+    			this._pixelRatio = this.renderer.getPixelRatio();
+    			this._width = size.width;
+    			this._height = size.height;
+
+    			renderTarget = this.renderTarget1.clone();
+    			renderTarget.setSize( this._width * this._pixelRatio, this._height * this._pixelRatio );
+
+    		}
+
+    		this.renderTarget1.dispose();
+    		this.renderTarget2.dispose();
+    		this.renderTarget1 = renderTarget;
+    		this.renderTarget2 = renderTarget.clone();
+
+    		this.writeBuffer = this.renderTarget1;
+    		this.readBuffer = this.renderTarget2;
+
+    	}
+
+    	setSize( width, height ) {
+
+    		this._width = width;
+    		this._height = height;
+
+    		const effectiveWidth = this._width * this._pixelRatio;
+    		const effectiveHeight = this._height * this._pixelRatio;
+
+    		this.renderTarget1.setSize( effectiveWidth, effectiveHeight );
+    		this.renderTarget2.setSize( effectiveWidth, effectiveHeight );
+
+    		for ( let i = 0; i < this.passes.length; i ++ ) {
+
+    			this.passes[ i ].setSize( effectiveWidth, effectiveHeight );
+
+    		}
+
+    	}
+
+    	setPixelRatio( pixelRatio ) {
+
+    		this._pixelRatio = pixelRatio;
+
+    		this.setSize( this._width, this._height );
+
+    	}
+
+    }
+
+    // Helper for passes that need to fill the viewport with a single quad.
+
+    new OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+
+    // https://github.com/mrdoob/three.js/pull/21358
+
+    const _geometry = new BufferGeometry();
+    _geometry.setAttribute( 'position', new Float32BufferAttribute( [ - 1, 3, 0, - 1, - 1, 0, 3, - 1, 0 ], 3 ) );
+    _geometry.setAttribute( 'uv', new Float32BufferAttribute( [ 0, 2, 0, 0, 2, 0 ], 2 ) );
+
+    /**
+     * Luminosity
+     * http://en.wikipedia.org/wiki/Luminosity
+     */
+
+    const LuminosityHighPassShader = {
+
+    	shaderID: 'luminosityHighPass',
+
+    	uniforms: {
+
+    		'tDiffuse': { value: null },
+    		'luminosityThreshold': { value: 1.0 },
+    		'smoothWidth': { value: 1.0 },
+    		'defaultColor': { value: new Color( 0x000000 ) },
+    		'defaultOpacity': { value: 0.0 }
+
+    	},
+
+    	vertexShader: /* glsl */`
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vUv = uv;
+
+			gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+		}`,
+
+    	fragmentShader: /* glsl */`
+
+		uniform sampler2D tDiffuse;
+		uniform vec3 defaultColor;
+		uniform float defaultOpacity;
+		uniform float luminosityThreshold;
+		uniform float smoothWidth;
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vec4 texel = texture2D( tDiffuse, vUv );
+
+			vec3 luma = vec3( 0.299, 0.587, 0.114 );
+
+			float v = dot( texel.xyz, luma );
+
+			vec4 outputColor = vec4( defaultColor.rgb, defaultOpacity );
+
+			float alpha = smoothstep( luminosityThreshold, luminosityThreshold + smoothWidth, v );
+
+			gl_FragColor = mix( outputColor, texel, alpha );
+
+		}`
+
+    };
+
+    /**
+     * UnrealBloomPass is inspired by the bloom pass of Unreal Engine. It creates a
+     * mip map chain of bloom textures and blurs them with different radii. Because
+     * of the weighted combination of mips, and because larger blurs are done on
+     * higher mips, this effect provides good quality and performance.
+     *
+     * Reference:
+     * - https://docs.unrealengine.com/latest/INT/Engine/Rendering/PostProcessEffects/Bloom/
+     */
+    class UnrealBloomPass extends Pass {
+
+    	constructor( resolution, strength, radius, threshold ) {
+
+    		super();
+
+    		this.strength = ( strength !== undefined ) ? strength : 1;
+    		this.radius = radius;
+    		this.threshold = threshold;
+    		this.resolution = ( resolution !== undefined ) ? new Vector2( resolution.x, resolution.y ) : new Vector2( 256, 256 );
+
+    		// create color only once here, reuse it later inside the render function
+    		this.clearColor = new Color( 0, 0, 0 );
+
+    		// render targets
+    		const pars = { minFilter: LinearFilter, magFilter: LinearFilter, format: RGBAFormat };
+    		this.renderTargetsHorizontal = [];
+    		this.renderTargetsVertical = [];
+    		this.nMips = 5;
+    		let resx = Math.round( this.resolution.x / 2 );
+    		let resy = Math.round( this.resolution.y / 2 );
+
+    		this.renderTargetBright = new WebGLRenderTarget( resx, resy, pars );
+    		this.renderTargetBright.texture.name = 'UnrealBloomPass.bright';
+    		this.renderTargetBright.texture.generateMipmaps = false;
+
+    		for ( let i = 0; i < this.nMips; i ++ ) {
+
+    			const renderTargetHorizonal = new WebGLRenderTarget( resx, resy, pars );
+
+    			renderTargetHorizonal.texture.name = 'UnrealBloomPass.h' + i;
+    			renderTargetHorizonal.texture.generateMipmaps = false;
+
+    			this.renderTargetsHorizontal.push( renderTargetHorizonal );
+
+    			const renderTargetVertical = new WebGLRenderTarget( resx, resy, pars );
+
+    			renderTargetVertical.texture.name = 'UnrealBloomPass.v' + i;
+    			renderTargetVertical.texture.generateMipmaps = false;
+
+    			this.renderTargetsVertical.push( renderTargetVertical );
+
+    			resx = Math.round( resx / 2 );
+
+    			resy = Math.round( resy / 2 );
+
+    		}
+
+    		// luminosity high pass material
+
+    		if ( LuminosityHighPassShader === undefined )
+    			console.error( 'THREE.UnrealBloomPass relies on LuminosityHighPassShader' );
+
+    		const highPassShader = LuminosityHighPassShader;
+    		this.highPassUniforms = UniformsUtils.clone( highPassShader.uniforms );
+
+    		this.highPassUniforms[ 'luminosityThreshold' ].value = threshold;
+    		this.highPassUniforms[ 'smoothWidth' ].value = 0.01;
+
+    		this.materialHighPassFilter = new ShaderMaterial( {
+    			uniforms: this.highPassUniforms,
+    			vertexShader: highPassShader.vertexShader,
+    			fragmentShader: highPassShader.fragmentShader,
+    			defines: {}
+    		} );
+
+    		// Gaussian Blur Materials
+    		this.separableBlurMaterials = [];
+    		const kernelSizeArray = [ 3, 5, 7, 9, 11 ];
+    		resx = Math.round( this.resolution.x / 2 );
+    		resy = Math.round( this.resolution.y / 2 );
+
+    		for ( let i = 0; i < this.nMips; i ++ ) {
+
+    			this.separableBlurMaterials.push( this.getSeperableBlurMaterial( kernelSizeArray[ i ] ) );
+
+    			this.separableBlurMaterials[ i ].uniforms[ 'texSize' ].value = new Vector2( resx, resy );
+
+    			resx = Math.round( resx / 2 );
+
+    			resy = Math.round( resy / 2 );
+
+    		}
+
+    		// Composite material
+    		this.compositeMaterial = this.getCompositeMaterial( this.nMips );
+    		this.compositeMaterial.uniforms[ 'blurTexture1' ].value = this.renderTargetsVertical[ 0 ].texture;
+    		this.compositeMaterial.uniforms[ 'blurTexture2' ].value = this.renderTargetsVertical[ 1 ].texture;
+    		this.compositeMaterial.uniforms[ 'blurTexture3' ].value = this.renderTargetsVertical[ 2 ].texture;
+    		this.compositeMaterial.uniforms[ 'blurTexture4' ].value = this.renderTargetsVertical[ 3 ].texture;
+    		this.compositeMaterial.uniforms[ 'blurTexture5' ].value = this.renderTargetsVertical[ 4 ].texture;
+    		this.compositeMaterial.uniforms[ 'bloomStrength' ].value = strength;
+    		this.compositeMaterial.uniforms[ 'bloomRadius' ].value = 0.1;
+    		this.compositeMaterial.needsUpdate = true;
+
+    		const bloomFactors = [ 1.0, 0.8, 0.6, 0.4, 0.2 ];
+    		this.compositeMaterial.uniforms[ 'bloomFactors' ].value = bloomFactors;
+    		this.bloomTintColors = [ new Vector3( 1, 1, 1 ), new Vector3( 1, 1, 1 ), new Vector3( 1, 1, 1 ), new Vector3( 1, 1, 1 ), new Vector3( 1, 1, 1 ) ];
+    		this.compositeMaterial.uniforms[ 'bloomTintColors' ].value = this.bloomTintColors;
+
+    		// copy material
+    		if ( CopyShader === undefined ) {
+
+    			console.error( 'THREE.UnrealBloomPass relies on CopyShader' );
+
+    		}
+
+    		const copyShader = CopyShader;
+
+    		this.copyUniforms = UniformsUtils.clone( copyShader.uniforms );
+    		this.copyUniforms[ 'opacity' ].value = 1.0;
+
+    		this.materialCopy = new ShaderMaterial( {
+    			uniforms: this.copyUniforms,
+    			vertexShader: copyShader.vertexShader,
+    			fragmentShader: copyShader.fragmentShader,
+    			blending: AdditiveBlending,
+    			depthTest: false,
+    			depthWrite: false,
+    			transparent: true
+    		} );
+
+    		this.enabled = true;
+    		this.needsSwap = false;
+
+    		this._oldClearColor = new Color();
+    		this.oldClearAlpha = 1;
+
+    		this.basic = new MeshBasicMaterial();
+
+    		this.fsQuad = new FullScreenQuad( null );
+
+    	}
+
+    	dispose() {
+
+    		for ( let i = 0; i < this.renderTargetsHorizontal.length; i ++ ) {
+
+    			this.renderTargetsHorizontal[ i ].dispose();
+
+    		}
+
+    		for ( let i = 0; i < this.renderTargetsVertical.length; i ++ ) {
+
+    			this.renderTargetsVertical[ i ].dispose();
+
+    		}
+
+    		this.renderTargetBright.dispose();
+
+    	}
+
+    	setSize( width, height ) {
+
+    		let resx = Math.round( width / 2 );
+    		let resy = Math.round( height / 2 );
+
+    		this.renderTargetBright.setSize( resx, resy );
+
+    		for ( let i = 0; i < this.nMips; i ++ ) {
+
+    			this.renderTargetsHorizontal[ i ].setSize( resx, resy );
+    			this.renderTargetsVertical[ i ].setSize( resx, resy );
+
+    			this.separableBlurMaterials[ i ].uniforms[ 'texSize' ].value = new Vector2( resx, resy );
+
+    			resx = Math.round( resx / 2 );
+    			resy = Math.round( resy / 2 );
+
+    		}
+
+    	}
+
+    	render( renderer, writeBuffer, readBuffer, deltaTime, maskActive ) {
+
+    		renderer.getClearColor( this._oldClearColor );
+    		this.oldClearAlpha = renderer.getClearAlpha();
+    		const oldAutoClear = renderer.autoClear;
+    		renderer.autoClear = false;
+
+    		renderer.setClearColor( this.clearColor, 0 );
+
+    		if ( maskActive ) renderer.state.buffers.stencil.setTest( false );
+
+    		// Render input to screen
+
+    		if ( this.renderToScreen ) {
+
+    			this.fsQuad.material = this.basic;
+    			this.basic.map = readBuffer.texture;
+
+    			renderer.setRenderTarget( null );
+    			renderer.clear();
+    			this.fsQuad.render( renderer );
+
+    		}
+
+    		// 1. Extract Bright Areas
+
+    		this.highPassUniforms[ 'tDiffuse' ].value = readBuffer.texture;
+    		this.highPassUniforms[ 'luminosityThreshold' ].value = this.threshold;
+    		this.fsQuad.material = this.materialHighPassFilter;
+
+    		renderer.setRenderTarget( this.renderTargetBright );
+    		renderer.clear();
+    		this.fsQuad.render( renderer );
+
+    		// 2. Blur All the mips progressively
+
+    		let inputRenderTarget = this.renderTargetBright;
+
+    		for ( let i = 0; i < this.nMips; i ++ ) {
+
+    			this.fsQuad.material = this.separableBlurMaterials[ i ];
+
+    			this.separableBlurMaterials[ i ].uniforms[ 'colorTexture' ].value = inputRenderTarget.texture;
+    			this.separableBlurMaterials[ i ].uniforms[ 'direction' ].value = UnrealBloomPass.BlurDirectionX;
+    			renderer.setRenderTarget( this.renderTargetsHorizontal[ i ] );
+    			renderer.clear();
+    			this.fsQuad.render( renderer );
+
+    			this.separableBlurMaterials[ i ].uniforms[ 'colorTexture' ].value = this.renderTargetsHorizontal[ i ].texture;
+    			this.separableBlurMaterials[ i ].uniforms[ 'direction' ].value = UnrealBloomPass.BlurDirectionY;
+    			renderer.setRenderTarget( this.renderTargetsVertical[ i ] );
+    			renderer.clear();
+    			this.fsQuad.render( renderer );
+
+    			inputRenderTarget = this.renderTargetsVertical[ i ];
+
+    		}
+
+    		// Composite All the mips
+
+    		this.fsQuad.material = this.compositeMaterial;
+    		this.compositeMaterial.uniforms[ 'bloomStrength' ].value = this.strength;
+    		this.compositeMaterial.uniforms[ 'bloomRadius' ].value = this.radius;
+    		this.compositeMaterial.uniforms[ 'bloomTintColors' ].value = this.bloomTintColors;
+
+    		renderer.setRenderTarget( this.renderTargetsHorizontal[ 0 ] );
+    		renderer.clear();
+    		this.fsQuad.render( renderer );
+
+    		// Blend it additively over the input texture
+
+    		this.fsQuad.material = this.materialCopy;
+    		this.copyUniforms[ 'tDiffuse' ].value = this.renderTargetsHorizontal[ 0 ].texture;
+
+    		if ( maskActive ) renderer.state.buffers.stencil.setTest( true );
+
+    		if ( this.renderToScreen ) {
+
+    			renderer.setRenderTarget( null );
+    			this.fsQuad.render( renderer );
+
+    		} else {
+
+    			renderer.setRenderTarget( readBuffer );
+    			this.fsQuad.render( renderer );
+
+    		}
+
+    		// Restore renderer settings
+
+    		renderer.setClearColor( this._oldClearColor, this.oldClearAlpha );
+    		renderer.autoClear = oldAutoClear;
+
+    	}
+
+    	getSeperableBlurMaterial( kernelRadius ) {
+
+    		return new ShaderMaterial( {
+
+    			defines: {
+    				'KERNEL_RADIUS': kernelRadius,
+    				'SIGMA': kernelRadius
+    			},
+
+    			uniforms: {
+    				'colorTexture': { value: null },
+    				'texSize': { value: new Vector2( 0.5, 0.5 ) },
+    				'direction': { value: new Vector2( 0.5, 0.5 ) }
+    			},
+
+    			vertexShader:
+    				`varying vec2 vUv;
+				void main() {
+					vUv = uv;
+					gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+				}`,
+
+    			fragmentShader:
+    				`#include <common>
+				varying vec2 vUv;
+				uniform sampler2D colorTexture;
+				uniform vec2 texSize;
+				uniform vec2 direction;
+
+				float gaussianPdf(in float x, in float sigma) {
+					return 0.39894 * exp( -0.5 * x * x/( sigma * sigma))/sigma;
+				}
+				void main() {
+					vec2 invSize = 1.0 / texSize;
+					float fSigma = float(SIGMA);
+					float weightSum = gaussianPdf(0.0, fSigma);
+					vec3 diffuseSum = texture2D( colorTexture, vUv).rgb * weightSum;
+					for( int i = 1; i < KERNEL_RADIUS; i ++ ) {
+						float x = float(i);
+						float w = gaussianPdf(x, fSigma);
+						vec2 uvOffset = direction * invSize * x;
+						vec3 sample1 = texture2D( colorTexture, vUv + uvOffset).rgb;
+						vec3 sample2 = texture2D( colorTexture, vUv - uvOffset).rgb;
+						diffuseSum += (sample1 + sample2) * w;
+						weightSum += 2.0 * w;
+					}
+					gl_FragColor = vec4(diffuseSum/weightSum, 1.0);
+				}`
+    		} );
+
+    	}
+
+    	getCompositeMaterial( nMips ) {
+
+    		return new ShaderMaterial( {
+
+    			defines: {
+    				'NUM_MIPS': nMips
+    			},
+
+    			uniforms: {
+    				'blurTexture1': { value: null },
+    				'blurTexture2': { value: null },
+    				'blurTexture3': { value: null },
+    				'blurTexture4': { value: null },
+    				'blurTexture5': { value: null },
+    				'dirtTexture': { value: null },
+    				'bloomStrength': { value: 1.0 },
+    				'bloomFactors': { value: null },
+    				'bloomTintColors': { value: null },
+    				'bloomRadius': { value: 0.0 }
+    			},
+
+    			vertexShader:
+    				`varying vec2 vUv;
+				void main() {
+					vUv = uv;
+					gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+				}`,
+
+    			fragmentShader:
+    				`varying vec2 vUv;
+				uniform sampler2D blurTexture1;
+				uniform sampler2D blurTexture2;
+				uniform sampler2D blurTexture3;
+				uniform sampler2D blurTexture4;
+				uniform sampler2D blurTexture5;
+				uniform sampler2D dirtTexture;
+				uniform float bloomStrength;
+				uniform float bloomRadius;
+				uniform float bloomFactors[NUM_MIPS];
+				uniform vec3 bloomTintColors[NUM_MIPS];
+
+				float lerpBloomFactor(const in float factor) {
+					float mirrorFactor = 1.2 - factor;
+					return mix(factor, mirrorFactor, bloomRadius);
+				}
+
+				void main() {
+					gl_FragColor = bloomStrength * ( lerpBloomFactor(bloomFactors[0]) * vec4(bloomTintColors[0], 1.0) * texture2D(blurTexture1, vUv) +
+						lerpBloomFactor(bloomFactors[1]) * vec4(bloomTintColors[1], 1.0) * texture2D(blurTexture2, vUv) +
+						lerpBloomFactor(bloomFactors[2]) * vec4(bloomTintColors[2], 1.0) * texture2D(blurTexture3, vUv) +
+						lerpBloomFactor(bloomFactors[3]) * vec4(bloomTintColors[3], 1.0) * texture2D(blurTexture4, vUv) +
+						lerpBloomFactor(bloomFactors[4]) * vec4(bloomTintColors[4], 1.0) * texture2D(blurTexture5, vUv) );
+				}`
+    		} );
+
+    	}
+
+    }
+
+    UnrealBloomPass.BlurDirectionX = new Vector2( 1.0, 0.0 );
+    UnrealBloomPass.BlurDirectionY = new Vector2( 0.0, 1.0 );
+
+    class RenderPass extends Pass {
+
+    	constructor( scene, camera, overrideMaterial, clearColor, clearAlpha ) {
+
+    		super();
+
+    		this.scene = scene;
+    		this.camera = camera;
+
+    		this.overrideMaterial = overrideMaterial;
+
+    		this.clearColor = clearColor;
+    		this.clearAlpha = ( clearAlpha !== undefined ) ? clearAlpha : 0;
+
+    		this.clear = true;
+    		this.clearDepth = false;
+    		this.needsSwap = false;
+    		this._oldClearColor = new Color();
+
+    	}
+
+    	render( renderer, writeBuffer, readBuffer /*, deltaTime, maskActive */ ) {
+
+    		const oldAutoClear = renderer.autoClear;
+    		renderer.autoClear = false;
+
+    		let oldClearAlpha, oldOverrideMaterial;
+
+    		if ( this.overrideMaterial !== undefined ) {
+
+    			oldOverrideMaterial = this.scene.overrideMaterial;
+
+    			this.scene.overrideMaterial = this.overrideMaterial;
+
+    		}
+
+    		if ( this.clearColor ) {
+
+    			renderer.getClearColor( this._oldClearColor );
+    			oldClearAlpha = renderer.getClearAlpha();
+
+    			renderer.setClearColor( this.clearColor, this.clearAlpha );
+
+    		}
+
+    		if ( this.clearDepth ) {
+
+    			renderer.clearDepth();
+
+    		}
+
+    		renderer.setRenderTarget( this.renderToScreen ? null : readBuffer );
+
+    		// TODO: Avoid using autoClear properties, see https://github.com/mrdoob/three.js/pull/15571#issuecomment-465669600
+    		if ( this.clear ) renderer.clear( renderer.autoClearColor, renderer.autoClearDepth, renderer.autoClearStencil );
+    		renderer.render( this.scene, this.camera );
+
+    		if ( this.clearColor ) {
+
+    			renderer.setClearColor( this._oldClearColor, oldClearAlpha );
+
+    		}
+
+    		if ( this.overrideMaterial !== undefined ) {
+
+    			this.scene.overrideMaterial = oldOverrideMaterial;
+
+    		}
+
+    		renderer.autoClear = oldAutoClear;
+
+    	}
+
+    }
+
+    /* src\Player.svelte generated by Svelte v3.42.6 */
+    const file$1 = "src\\Player.svelte";
+
+    function create_fragment$1(ctx) {
     	let main;
-    	let section1;
-    	let section0;
-    	let t;
-    	let div;
-    	let audio;
-    	let audio_src_value;
-    	let mounted;
-    	let dispose;
+    	let section;
 
     	const block = {
     		c: function create() {
     			main = element("main");
-    			section1 = element("section");
-    			section0 = element("section");
-    			t = space();
-    			div = element("div");
-    			audio = element("audio");
-    			attr_dev(section0, "class", "audioCanvas svelte-hcpn0d");
-    			add_location(section0, file, 107, 2, 3846);
-    			attr_dev(audio, "id", "songSource");
-    			if (!src_url_equal(audio.src, audio_src_value = song)) attr_dev(audio, "src", audio_src_value);
-    			audio.controls = true;
-    			add_location(audio, file, 112, 3, 3938);
-    			attr_dev(div, "class", "audioPlayer");
-    			add_location(div, file, 111, 2, 3909);
-    			attr_dev(section1, "class", "musicSect svelte-hcpn0d");
-    			add_location(section1, file, 106, 1, 3816);
-    			add_location(main, file, 105, 0, 3808);
+    			section = element("section");
+    			attr_dev(section, "class", "audioCanvas svelte-ta597d");
+    			add_location(section, file$1, 123, 4, 4305);
+    			add_location(main, file$1, 122, 0, 4293);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, main, anchor);
-    			append_dev(main, section1);
-    			append_dev(section1, section0);
-    			/*section0_binding*/ ctx[3](section0);
-    			append_dev(section1, t);
-    			append_dev(section1, div);
-    			append_dev(div, audio);
-    			/*audio_binding*/ ctx[4](audio);
-
-    			if (!mounted) {
-    				dispose = listen_dev(audio, "play", /*resumeContext*/ ctx[2], false, false, false);
-    				mounted = true;
-    			}
+    			append_dev(main, section);
+    			/*section_binding*/ ctx[2](section);
     		},
     		p: noop,
     		i: noop,
     		o: noop,
     		d: function destroy(detaching) {
     			if (detaching) detach_dev(main);
-    			/*section0_binding*/ ctx[3](null);
-    			/*audio_binding*/ ctx[4](null);
-    			mounted = false;
-    			dispose();
+    			/*section_binding*/ ctx[2](null);
     		}
     	};
 
     	dispatch_dev("SvelteRegisterBlock", {
     		block,
-    		id: create_fragment.name,
+    		id: create_fragment$1.name,
     		type: "component",
     		source: "",
     		ctx
@@ -50742,34 +51891,20 @@ var app = (function () {
     	return block;
     }
 
-    const song = "./media/song2.mp3";
-
-    function instance($$self, $$props, $$invalidate) {
+    function instance$1($$self, $$props, $$invalidate) {
     	let { $$slots: slots = {}, $$scope } = $$props;
-    	validate_slots('App', slots, []);
+    	validate_slots('Player', slots, []);
     	let ref;
-    	let audioDiv;
+    	let { audioDiv } = $$props;
     	const context = new window.AudioContext();
-
-    	const resumeContext = () => {
-    		context.resume();
-    	};
-
-    	const getLoudness = arr => {
-    		var sum = 0;
-
-    		for (var i = 0; i < arr.length; i++) {
-    			sum += arr[i];
-    		}
-
-    		return sum / arr.length;
-    	};
 
     	//Three set up
     	const scene = new Scene();
 
-    	const camera = new PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.01, 5000);
-    	camera.position.set(0, 0, 800);
+    	const width = window.innerWidth;
+    	const height = window.innerHeight;
+    	const camera = new PerspectiveCamera(100, width / height, 0.1, 5000);
+    	camera.position.set(0, 0, 250);
 
     	const renderer = new WebGLRenderer({
     			antialias: true,
@@ -50778,20 +51913,35 @@ var app = (function () {
     		});
 
     	renderer.setClearColor(0x000000, 0);
-    	renderer.setSize(window.innerWidth, window.innerHeight);
+    	renderer.setSize(width, height);
     	const lines = new Group();
 
+    	const resumeContext = () => {
+    		context.resume();
+    	};
+
+    	const getLoudness = arr => {
+    		let sum = 0;
+
+    		for (let i = 0; i < arr.length; i++) {
+    			sum += arr[i];
+    		}
+
+    		return sum / arr.length;
+    	};
+
+    	//console.log(audioDiv)
     	onMount(() => {
     		//Audio set up
+    		//console.log(audioDiv)
     		const analyser = context.createAnalyser();
 
     		const source = context.createMediaElementSource(audioDiv);
     		source.connect(analyser);
     		analyser.connect(context.destination);
-    		analyser.smoothingTimeConstant = 0.9;
-    		analyser.minDecibels = -100;
-    		analyser.maxDecibels = -10;
-    		analyser.fftSize = 512;
+    		analyser.smoothingTimeConstant = 0.7;
+    		analyser.maxDecibels = -20;
+    		analyser.fftSize = 1024;
     		const bufferLength = analyser.frequencyBinCount;
     		const dataArray = new Uint8Array(bufferLength);
     		ref.appendChild(renderer.domElement);
@@ -50800,13 +51950,14 @@ var app = (function () {
     		const addLines = () => {
     			let z = 0;
 
-    			for (let l = 0; l < 1000; l++) {
+    			for (let l = 0; l < 512; l++) {
     				const material = new LineBasicMaterial();
     				const geometry = new BufferGeometry();
     				const line = new Line(geometry, material);
+    				line.frustumCulled = false;
     				line.translateZ(z);
     				lines.add(line);
-    				z -= 10;
+    				z -= 1;
     			}
     		};
 
@@ -50821,26 +51972,23 @@ var app = (function () {
     			const loudness = Math.max(...dataAudio);
 
     			for (let i = dataC.length - 1; i > 0; i--) {
-    				const current = lines.children[i].geometry.getAttribute('position');
-    				const l = (dataC.length - i) / dataC.length * loudness;
+    				const current = lines.children[i].geometry.getAttribute("position");
+    				const l = (dataC.length - i) / dataC.length * (loudness / 255) * 360;
 
     				if (current) {
     					current.array = dataC[i - 1];
-    					lines.children[i].material.color = new Color('hsl(' + l + ', 100%, 50%)');
+    					lines.children[i].material.color = new Color("hsl(" + l + ", 70%, 20%)");
     					current.needsUpdate = true;
     				} else {
-    					lines.children[i].geometry.setAttribute('position', new BufferAttribute(dataC[i - 1], 3));
+    					lines.children[i].geometry.setAttribute("position", new BufferAttribute(dataC[i - 1], 3));
     				}
     			}
 
     			for (let y = 0; y < data.length; y++) {
-    				positions[3 * y + 1] = data[y]; //y
-    				positions[3 * y] = window.innerWidth / data.length * y; //x
+    				positions[3 * y + 1] = data[y] * 2; //y
+    				positions[3 * y] = width / data.length * y; //x
     			}
 
-    			lines.children[0].geometry.setAttribute('position', new BufferAttribute(positions, 3));
-
-    			//lines.children[0].material.color = new THREE.Color('hsl(' + loudness + ', 100%, 50%)')
     			dataC.unshift(positions);
 
     			if (dataC.length > lines.children.length) {
@@ -50848,62 +51996,70 @@ var app = (function () {
     			}
     		};
 
-    		let last = 0;
+    		//Post Processing
+    		const composer = new EffectComposer(renderer);
 
-    		const animate = now => {
-    			if (!last || now - last >= 5) {
-    				analyser.getByteFrequencyData(dataArray);
-    				last = now;
-    				moveL(dataArray);
-    			}
+    		composer.setSize(width, height);
+    		composer.addPass(new RenderPass(scene, camera));
+    		const res = new Vector2(width, height);
+    		const bloomPass = new UnrealBloomPass(res, 1, 1, 0);
+    		bloomPass.exposure = 1;
+    		composer.addPass(bloomPass);
 
-    			camera.rotation.z += getLoudness(dataArray) / (4096 * 2);
-    			renderer.render(scene, camera);
+    		const animate = () => {
+    			analyser.getByteFrequencyData(dataArray);
+    			moveL(dataArray);
+    			camera.rotation.z += getLoudness(dataArray) / (dataArray.length * 60);
+    			composer.render();
     			requestAnimationFrame(animate);
     		};
 
+    		//Init
     		addLines();
-    		lines.translateX(-window.innerWidth / 2);
+
+    		lines.translateX(-width / 2);
     		const lines2 = lines.clone();
     		lines2.rotation.z = Math.PI;
-    		lines2.translateX(-window.innerWidth);
+    		lines2.translateX(-width);
     		scene.add(lines2);
-    		animate(last);
+    		animate();
     	});
 
-    	const writable_props = [];
+    	const writable_props = ['audioDiv'];
 
     	Object.keys($$props).forEach(key => {
-    		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn(`<App> was created with unknown prop '${key}'`);
+    		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn(`<Player> was created with unknown prop '${key}'`);
     	});
 
-    	function section0_binding($$value) {
+    	function section_binding($$value) {
     		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
     			ref = $$value;
     			$$invalidate(0, ref);
     		});
     	}
 
-    	function audio_binding($$value) {
-    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
-    			audioDiv = $$value;
-    			$$invalidate(1, audioDiv);
-    		});
-    	}
+    	$$self.$$set = $$props => {
+    		if ('audioDiv' in $$props) $$invalidate(1, audioDiv = $$props.audioDiv);
+    	};
 
     	$$self.$capture_state = () => ({
     		onMount,
+    		EffectComposer,
+    		UnrealBloomPass,
+    		RenderPass,
     		THREE,
-    		song,
+    		Vector2,
     		ref,
     		audioDiv,
     		context,
-    		resumeContext,
-    		getLoudness,
     		scene,
+    		width,
+    		height,
     		camera,
     		renderer,
-    		lines
+    		lines,
+    		resumeContext,
+    		getLoudness
     	});
 
     	$$self.$inject_state = $$props => {
@@ -50915,7 +52071,799 @@ var app = (function () {
     		$$self.$inject_state($$props.$$inject);
     	}
 
-    	return [ref, audioDiv, resumeContext, section0_binding, audio_binding];
+    	return [ref, audioDiv, section_binding];
+    }
+
+    class Player extends SvelteComponentDev {
+    	constructor(options) {
+    		super(options);
+    		init(this, options, instance$1, create_fragment$1, safe_not_equal, { audioDiv: 1 });
+
+    		dispatch_dev("SvelteRegisterComponent", {
+    			component: this,
+    			tagName: "Player",
+    			options,
+    			id: create_fragment$1.name
+    		});
+
+    		const { ctx } = this.$$;
+    		const props = options.props || {};
+
+    		if (/*audioDiv*/ ctx[1] === undefined && !('audioDiv' in props)) {
+    			console.warn("<Player> was created without expected prop 'audioDiv'");
+    		}
+    	}
+
+    	get audioDiv() {
+    		throw new Error("<Player>: Props cannot be read directly from the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+
+    	set audioDiv(value) {
+    		throw new Error("<Player>: Props cannot be set directly on the component instance unless compiling with 'accessors: true' or '<svelte:options accessors/>'");
+    	}
+    }
+
+    const subscriber_queue = [];
+    /**
+     * Create a `Writable` store that allows both updating and reading by subscription.
+     * @param {*=}value initial value
+     * @param {StartStopNotifier=}start start and stop notifications for subscriptions
+     */
+    function writable(value, start = noop) {
+        let stop;
+        const subscribers = new Set();
+        function set(new_value) {
+            if (safe_not_equal(value, new_value)) {
+                value = new_value;
+                if (stop) { // store is ready
+                    const run_queue = !subscriber_queue.length;
+                    for (const subscriber of subscribers) {
+                        subscriber[1]();
+                        subscriber_queue.push(subscriber, value);
+                    }
+                    if (run_queue) {
+                        for (let i = 0; i < subscriber_queue.length; i += 2) {
+                            subscriber_queue[i][0](subscriber_queue[i + 1]);
+                        }
+                        subscriber_queue.length = 0;
+                    }
+                }
+            }
+        }
+        function update(fn) {
+            set(fn(value));
+        }
+        function subscribe(run, invalidate = noop) {
+            const subscriber = [run, invalidate];
+            subscribers.add(subscriber);
+            if (subscribers.size === 1) {
+                stop = start(set) || noop;
+            }
+            run(value);
+            return () => {
+                subscribers.delete(subscriber);
+                if (subscribers.size === 0) {
+                    stop();
+                    stop = null;
+                }
+            };
+        }
+        return { set, update, subscribe };
+    }
+
+    function is_date(obj) {
+        return Object.prototype.toString.call(obj) === '[object Date]';
+    }
+
+    function tick_spring(ctx, last_value, current_value, target_value) {
+        if (typeof current_value === 'number' || is_date(current_value)) {
+            // @ts-ignore
+            const delta = target_value - current_value;
+            // @ts-ignore
+            const velocity = (current_value - last_value) / (ctx.dt || 1 / 60); // guard div by 0
+            const spring = ctx.opts.stiffness * delta;
+            const damper = ctx.opts.damping * velocity;
+            const acceleration = (spring - damper) * ctx.inv_mass;
+            const d = (velocity + acceleration) * ctx.dt;
+            if (Math.abs(d) < ctx.opts.precision && Math.abs(delta) < ctx.opts.precision) {
+                return target_value; // settled
+            }
+            else {
+                ctx.settled = false; // signal loop to keep ticking
+                // @ts-ignore
+                return is_date(current_value) ?
+                    new Date(current_value.getTime() + d) : current_value + d;
+            }
+        }
+        else if (Array.isArray(current_value)) {
+            // @ts-ignore
+            return current_value.map((_, i) => tick_spring(ctx, last_value[i], current_value[i], target_value[i]));
+        }
+        else if (typeof current_value === 'object') {
+            const next_value = {};
+            for (const k in current_value) {
+                // @ts-ignore
+                next_value[k] = tick_spring(ctx, last_value[k], current_value[k], target_value[k]);
+            }
+            // @ts-ignore
+            return next_value;
+        }
+        else {
+            throw new Error(`Cannot spring ${typeof current_value} values`);
+        }
+    }
+    function spring(value, opts = {}) {
+        const store = writable(value);
+        const { stiffness = 0.15, damping = 0.8, precision = 0.01 } = opts;
+        let last_time;
+        let task;
+        let current_token;
+        let last_value = value;
+        let target_value = value;
+        let inv_mass = 1;
+        let inv_mass_recovery_rate = 0;
+        let cancel_task = false;
+        function set(new_value, opts = {}) {
+            target_value = new_value;
+            const token = current_token = {};
+            if (value == null || opts.hard || (spring.stiffness >= 1 && spring.damping >= 1)) {
+                cancel_task = true; // cancel any running animation
+                last_time = now$1();
+                last_value = new_value;
+                store.set(value = target_value);
+                return Promise.resolve();
+            }
+            else if (opts.soft) {
+                const rate = opts.soft === true ? .5 : +opts.soft;
+                inv_mass_recovery_rate = 1 / (rate * 60);
+                inv_mass = 0; // infinite mass, unaffected by spring forces
+            }
+            if (!task) {
+                last_time = now$1();
+                cancel_task = false;
+                task = loop(now => {
+                    if (cancel_task) {
+                        cancel_task = false;
+                        task = null;
+                        return false;
+                    }
+                    inv_mass = Math.min(inv_mass + inv_mass_recovery_rate, 1);
+                    const ctx = {
+                        inv_mass,
+                        opts: spring,
+                        settled: true,
+                        dt: (now - last_time) * 60 / 1000
+                    };
+                    const next_value = tick_spring(ctx, last_value, value, target_value);
+                    last_time = now;
+                    last_value = value;
+                    store.set(value = next_value);
+                    if (ctx.settled) {
+                        task = null;
+                    }
+                    return !ctx.settled;
+                });
+            }
+            return new Promise(fulfil => {
+                task.promise.then(() => {
+                    if (token === current_token)
+                        fulfil();
+                });
+            });
+        }
+        const spring = {
+            set,
+            update: (fn, opts) => set(fn(target_value, value), opts),
+            subscribe: store.subscribe,
+            stiffness,
+            damping,
+            precision
+        };
+        return spring;
+    }
+
+    /* src\App.svelte generated by Svelte v3.42.6 */
+    const file = "src\\App.svelte";
+
+    function get_each_context(ctx, list, i) {
+    	const child_ctx = ctx.slice();
+    	child_ctx[24] = list[i];
+    	child_ctx[26] = i;
+    	return child_ctx;
+    }
+
+    // (90:8) {#each songs as song, index}
+    function create_each_block(ctx) {
+    	let div;
+    	let span0;
+    	let t0_value = /*song*/ ctx[24].artist + "";
+    	let t0;
+    	let t1;
+    	let span1;
+    	let t2_value = /*song*/ ctx[24].name + "";
+    	let t2;
+    	let t3;
+    	let mounted;
+    	let dispose;
+
+    	function click_handler() {
+    		return /*click_handler*/ ctx[15](/*index*/ ctx[26]);
+    	}
+
+    	const block = {
+    		c: function create() {
+    			div = element("div");
+    			span0 = element("span");
+    			t0 = text(t0_value);
+    			t1 = text(" -\n                ");
+    			span1 = element("span");
+    			t2 = text(t2_value);
+    			t3 = space();
+    			attr_dev(span0, "class", "songArtist");
+    			add_location(span0, file, 91, 16, 2134);
+    			attr_dev(span1, "class", "songName");
+    			add_location(span1, file, 92, 16, 2198);
+    			attr_dev(div, "class", "songWrapper svelte-lcqk65");
+    			add_location(div, file, 90, 12, 2057);
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, div, anchor);
+    			append_dev(div, span0);
+    			append_dev(span0, t0);
+    			append_dev(div, t1);
+    			append_dev(div, span1);
+    			append_dev(span1, t2);
+    			append_dev(div, t3);
+
+    			if (!mounted) {
+    				dispose = listen_dev(div, "click", click_handler, false, false, false);
+    				mounted = true;
+    			}
+    		},
+    		p: function update(new_ctx, dirty) {
+    			ctx = new_ctx;
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(div);
+    			mounted = false;
+    			dispose();
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_each_block.name,
+    		type: "each",
+    		source: "(90:8) {#each songs as song, index}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    // (116:4) {:else}
+    function create_else_block(ctx) {
+    	let h2;
+
+    	const block = {
+    		c: function create() {
+    			h2 = element("h2");
+    			h2.textContent = "Loading player";
+    			add_location(h2, file, 116, 8, 2770);
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, h2, anchor);
+    		},
+    		p: noop,
+    		i: noop,
+    		o: noop,
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(h2);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_else_block.name,
+    		type: "else",
+    		source: "(116:4) {:else}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    // (108:4) {#if audioTag != null}
+    function create_if_block(ctx) {
+    	let section;
+    	let player;
+    	let section_resize_listener;
+    	let current;
+    	let mounted;
+    	let dispose;
+
+    	player = new Player({
+    			props: { audioDiv: /*audioTag*/ ctx[1] },
+    			$$inline: true
+    		});
+
+    	const block = {
+    		c: function create() {
+    			section = element("section");
+    			create_component(player.$$.fragment);
+    			attr_dev(section, "class", "visArea svelte-lcqk65");
+    			add_render_callback(() => /*section_elementresize_handler*/ ctx[20].call(section));
+    			add_location(section, file, 108, 8, 2564);
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, section, anchor);
+    			mount_component(player, section, null);
+    			section_resize_listener = add_resize_listener(section, /*section_elementresize_handler*/ ctx[20].bind(section));
+    			current = true;
+
+    			if (!mounted) {
+    				dispose = listen_dev(section, "click", /*handleClick*/ ctx[10], false, false, false);
+    				mounted = true;
+    			}
+    		},
+    		p: function update(ctx, dirty) {
+    			const player_changes = {};
+    			if (dirty & /*audioTag*/ 2) player_changes.audioDiv = /*audioTag*/ ctx[1];
+    			player.$set(player_changes);
+    		},
+    		i: function intro(local) {
+    			if (current) return;
+    			transition_in(player.$$.fragment, local);
+    			current = true;
+    		},
+    		o: function outro(local) {
+    			transition_out(player.$$.fragment, local);
+    			current = false;
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(section);
+    			destroy_component(player);
+    			section_resize_listener();
+    			mounted = false;
+    			dispose();
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_if_block.name,
+    		type: "if",
+    		source: "(108:4) {#if audioTag != null}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    function create_fragment(ctx) {
+    	let main;
+    	let section0;
+    	let t0;
+    	let audio;
+    	let audio_src_value;
+    	let audio_updating = false;
+    	let audio_animationframe;
+    	let audio_is_paused = true;
+    	let t1;
+    	let current_block_type_index;
+    	let if_block;
+    	let t2;
+    	let section1;
+    	let div2;
+    	let div0;
+    	let t3_value = /*currSong*/ ctx[0].artist + "";
+    	let t3;
+    	let t4;
+    	let t5_value = /*currSong*/ ctx[0].name + "";
+    	let t5;
+    	let t6;
+    	let div1;
+    	let current;
+    	let mounted;
+    	let dispose;
+    	let each_value = /*songs*/ ctx[7];
+    	validate_each_argument(each_value);
+    	let each_blocks = [];
+
+    	for (let i = 0; i < each_value.length; i += 1) {
+    		each_blocks[i] = create_each_block(get_each_context(ctx, each_value, i));
+    	}
+
+    	function audio_timeupdate_handler() {
+    		cancelAnimationFrame(audio_animationframe);
+
+    		if (!audio.paused) {
+    			audio_animationframe = raf(audio_timeupdate_handler);
+    			audio_updating = true;
+    		}
+
+    		/*audio_timeupdate_handler*/ ctx[17].call(audio);
+    	}
+
+    	const if_block_creators = [create_if_block, create_else_block];
+    	const if_blocks = [];
+
+    	function select_block_type(ctx, dirty) {
+    		if (/*audioTag*/ ctx[1] != null) return 0;
+    		return 1;
+    	}
+
+    	current_block_type_index = select_block_type(ctx);
+    	if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
+
+    	const block = {
+    		c: function create() {
+    			main = element("main");
+    			section0 = element("section");
+
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].c();
+    			}
+
+    			t0 = space();
+    			audio = element("audio");
+    			t1 = space();
+    			if_block.c();
+    			t2 = space();
+    			section1 = element("section");
+    			div2 = element("div");
+    			div0 = element("div");
+    			t3 = text(t3_value);
+    			t4 = text(" - ");
+    			t5 = text(t5_value);
+    			t6 = space();
+    			div1 = element("div");
+    			attr_dev(section0, "class", "songSelect svelte-lcqk65");
+    			add_location(section0, file, 88, 4, 1979);
+    			attr_dev(audio, "id", "songSource");
+    			if (!src_url_equal(audio.src, audio_src_value = /*currSong*/ ctx[0].src)) attr_dev(audio, "src", audio_src_value);
+    			if (/*duration*/ ctx[3] === void 0) add_render_callback(() => /*audio_durationchange_handler*/ ctx[18].call(audio));
+    			add_location(audio, file, 97, 4, 2295);
+    			attr_dev(div0, "class", "nowPlaying svelte-lcqk65");
+    			add_location(div0, file, 121, 12, 2909);
+    			attr_dev(div1, "class", "controlsProgress svelte-lcqk65");
+    			set_style(div1, "width", /*timer*/ ctx[5] + "%");
+    			add_location(div1, file, 122, 12, 2987);
+    			attr_dev(div2, "class", "progressBar svelte-lcqk65");
+    			add_location(div2, file, 120, 8, 2849);
+    			attr_dev(section1, "class", "audioControls svelte-lcqk65");
+    			add_location(section1, file, 119, 4, 2809);
+    			add_location(main, file, 87, 0, 1968);
+    		},
+    		l: function claim(nodes) {
+    			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, main, anchor);
+    			append_dev(main, section0);
+
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].m(section0, null);
+    			}
+
+    			append_dev(main, t0);
+    			append_dev(main, audio);
+    			/*audio_binding*/ ctx[16](audio);
+    			append_dev(main, t1);
+    			if_blocks[current_block_type_index].m(main, null);
+    			append_dev(main, t2);
+    			append_dev(main, section1);
+    			append_dev(section1, div2);
+    			append_dev(div2, div0);
+    			append_dev(div0, t3);
+    			append_dev(div0, t4);
+    			append_dev(div0, t5);
+    			append_dev(div2, t6);
+    			append_dev(div2, div1);
+    			current = true;
+
+    			if (!mounted) {
+    				dispose = [
+    					listen_dev(window, "keydown", /*handleKey*/ ctx[9], false, false, false),
+    					listen_dev(window, "mousemove", /*handleMove*/ ctx[14], false, false, false),
+    					listen_dev(audio, "timeupdate", audio_timeupdate_handler),
+    					listen_dev(audio, "durationchange", /*audio_durationchange_handler*/ ctx[18]),
+    					listen_dev(audio, "play", /*audio_play_pause_handler*/ ctx[19]),
+    					listen_dev(audio, "pause", /*audio_play_pause_handler*/ ctx[19]),
+    					listen_dev(audio, "playing", /*updateProgress*/ ctx[11], false, false, false),
+    					listen_dev(audio, "ended", /*switchSong*/ ctx[12], false, false, false),
+    					listen_dev(div2, "click", /*changeTime*/ ctx[13], false, false, false)
+    				];
+
+    				mounted = true;
+    			}
+    		},
+    		p: function update(ctx, [dirty]) {
+    			if (dirty & /*changeSong, songs*/ 384) {
+    				each_value = /*songs*/ ctx[7];
+    				validate_each_argument(each_value);
+    				let i;
+
+    				for (i = 0; i < each_value.length; i += 1) {
+    					const child_ctx = get_each_context(ctx, each_value, i);
+
+    					if (each_blocks[i]) {
+    						each_blocks[i].p(child_ctx, dirty);
+    					} else {
+    						each_blocks[i] = create_each_block(child_ctx);
+    						each_blocks[i].c();
+    						each_blocks[i].m(section0, null);
+    					}
+    				}
+
+    				for (; i < each_blocks.length; i += 1) {
+    					each_blocks[i].d(1);
+    				}
+
+    				each_blocks.length = each_value.length;
+    			}
+
+    			if (!current || dirty & /*currSong*/ 1 && !src_url_equal(audio.src, audio_src_value = /*currSong*/ ctx[0].src)) {
+    				attr_dev(audio, "src", audio_src_value);
+    			}
+
+    			if (!audio_updating && dirty & /*time*/ 4 && !isNaN(/*time*/ ctx[2])) {
+    				audio.currentTime = /*time*/ ctx[2];
+    			}
+
+    			audio_updating = false;
+
+    			if (dirty & /*paused*/ 16 && audio_is_paused !== (audio_is_paused = /*paused*/ ctx[4])) {
+    				audio[audio_is_paused ? "pause" : "play"]();
+    			}
+
+    			let previous_block_index = current_block_type_index;
+    			current_block_type_index = select_block_type(ctx);
+
+    			if (current_block_type_index === previous_block_index) {
+    				if_blocks[current_block_type_index].p(ctx, dirty);
+    			} else {
+    				group_outros();
+
+    				transition_out(if_blocks[previous_block_index], 1, 1, () => {
+    					if_blocks[previous_block_index] = null;
+    				});
+
+    				check_outros();
+    				if_block = if_blocks[current_block_type_index];
+
+    				if (!if_block) {
+    					if_block = if_blocks[current_block_type_index] = if_block_creators[current_block_type_index](ctx);
+    					if_block.c();
+    				} else {
+    					if_block.p(ctx, dirty);
+    				}
+
+    				transition_in(if_block, 1);
+    				if_block.m(main, t2);
+    			}
+
+    			if ((!current || dirty & /*currSong*/ 1) && t3_value !== (t3_value = /*currSong*/ ctx[0].artist + "")) set_data_dev(t3, t3_value);
+    			if ((!current || dirty & /*currSong*/ 1) && t5_value !== (t5_value = /*currSong*/ ctx[0].name + "")) set_data_dev(t5, t5_value);
+
+    			if (!current || dirty & /*timer*/ 32) {
+    				set_style(div1, "width", /*timer*/ ctx[5] + "%");
+    			}
+    		},
+    		i: function intro(local) {
+    			if (current) return;
+    			transition_in(if_block);
+    			current = true;
+    		},
+    		o: function outro(local) {
+    			transition_out(if_block);
+    			current = false;
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(main);
+    			destroy_each(each_blocks, detaching);
+    			/*audio_binding*/ ctx[16](null);
+    			if_blocks[current_block_type_index].d();
+    			mounted = false;
+    			run_all(dispose);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_fragment.name,
+    		type: "component",
+    		source: "",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    function instance($$self, $$props, $$invalidate) {
+    	let { $$slots: slots = {}, $$scope } = $$props;
+    	validate_slots('App', slots, []);
+
+    	const songs = [
+    		{
+    			name: "Us and Them",
+    			artist: "Derek Pope",
+    			src: "./media/song1.mp3"
+    		},
+    		{
+    			name: "Vulnerable ft. Jady (prod. Sueco)",
+    			artist: "JERHELL",
+    			src: "./media/song2.mp3"
+    		},
+    		{
+    			name: "Beyond It All, Lies Nothing But Isolation",
+    			artist: "Solyeong",
+    			src: "./media/song3.mp3"
+    		},
+    		{
+    			name: "Do it (Amen)",
+    			artist: "DJ МУДАК 2000",
+    			src: "./media/song4.mp3"
+    		}
+    	];
+
+    	let currSong = songs[0];
+    	let audioTag;
+    	let time = 0;
+    	let duration;
+    	let paused = true;
+    	let timer;
+    	let timerWidth;
+    	let curr = 0;
+    	let coords = spring({ x: 50, y: 50 }, { stiffness: 0.1, damping: 0.25 });
+    	let size = spring(10);
+
+    	const changeSong = index => {
+    		$$invalidate(0, currSong = songs[index]);
+    		curr = index;
+    		let canPlay = audioTag.play();
+
+    		if (canPlay != undefined) {
+    			canPlay.then(() => {
+    				audioTag.play();
+    			});
+    		}
+    	};
+
+    	const handleKey = e => {
+    		if (e.code === "Space" || e.key === " ") {
+    			if (paused) audioTag.play(); else audioTag.pause();
+    		}
+    	};
+
+    	const handleClick = e => {
+    		if (paused) audioTag.play(); else audioTag.pause();
+    	};
+
+    	const updateProgress = () => {
+    		$$invalidate(5, timer = time / duration * 100);
+    		requestAnimationFrame(updateProgress);
+    	};
+
+    	const switchSong = () => {
+    		curr++;
+
+    		if (curr < songs.length) {
+    			changeSong(curr);
+    		} else {
+    			curr = 0;
+    			changeSong(curr);
+    		}
+    	};
+
+    	const changeTime = e => {
+    		const c = e.clientX;
+    		const change = c / timerWidth;
+    		$$invalidate(2, time = duration * change);
+    	};
+
+    	const handleMove = e => {
+    		
+    	};
+
+    	const writable_props = [];
+
+    	Object.keys($$props).forEach(key => {
+    		if (!~writable_props.indexOf(key) && key.slice(0, 2) !== '$$' && key !== 'slot') console.warn(`<App> was created with unknown prop '${key}'`);
+    	});
+
+    	const click_handler = index => changeSong(index);
+
+    	function audio_binding($$value) {
+    		binding_callbacks[$$value ? 'unshift' : 'push'](() => {
+    			audioTag = $$value;
+    			$$invalidate(1, audioTag);
+    		});
+    	}
+
+    	function audio_timeupdate_handler() {
+    		time = this.currentTime;
+    		$$invalidate(2, time);
+    	}
+
+    	function audio_durationchange_handler() {
+    		duration = this.duration;
+    		$$invalidate(3, duration);
+    	}
+
+    	function audio_play_pause_handler() {
+    		paused = this.paused;
+    		$$invalidate(4, paused);
+    	}
+
+    	function section_elementresize_handler() {
+    		timerWidth = this.clientWidth;
+    		$$invalidate(6, timerWidth);
+    	}
+
+    	$$self.$capture_state = () => ({
+    		Player,
+    		spring,
+    		songs,
+    		currSong,
+    		audioTag,
+    		time,
+    		duration,
+    		paused,
+    		timer,
+    		timerWidth,
+    		curr,
+    		coords,
+    		size,
+    		changeSong,
+    		handleKey,
+    		handleClick,
+    		updateProgress,
+    		switchSong,
+    		changeTime,
+    		handleMove
+    	});
+
+    	$$self.$inject_state = $$props => {
+    		if ('currSong' in $$props) $$invalidate(0, currSong = $$props.currSong);
+    		if ('audioTag' in $$props) $$invalidate(1, audioTag = $$props.audioTag);
+    		if ('time' in $$props) $$invalidate(2, time = $$props.time);
+    		if ('duration' in $$props) $$invalidate(3, duration = $$props.duration);
+    		if ('paused' in $$props) $$invalidate(4, paused = $$props.paused);
+    		if ('timer' in $$props) $$invalidate(5, timer = $$props.timer);
+    		if ('timerWidth' in $$props) $$invalidate(6, timerWidth = $$props.timerWidth);
+    		if ('curr' in $$props) curr = $$props.curr;
+    		if ('coords' in $$props) coords = $$props.coords;
+    		if ('size' in $$props) size = $$props.size;
+    	};
+
+    	if ($$props && "$$inject" in $$props) {
+    		$$self.$inject_state($$props.$$inject);
+    	}
+
+    	return [
+    		currSong,
+    		audioTag,
+    		time,
+    		duration,
+    		paused,
+    		timer,
+    		timerWidth,
+    		songs,
+    		changeSong,
+    		handleKey,
+    		handleClick,
+    		updateProgress,
+    		switchSong,
+    		changeTime,
+    		handleMove,
+    		click_handler,
+    		audio_binding,
+    		audio_timeupdate_handler,
+    		audio_durationchange_handler,
+    		audio_play_pause_handler,
+    		section_elementresize_handler
+    	];
     }
 
     class App extends SvelteComponentDev {
