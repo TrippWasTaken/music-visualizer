@@ -11,7 +11,7 @@
     {#if !action}
     <div class="pageStart" on:click|once = {() => init()} transition:fade>
         <h1>Welcome</h1>
-        <span>Press <b>Space</b> or <b>Click</b> on the screen to start the Visuazlier</span>
+        <span><b>Click</b> on the screen to start the Visuazlier</span>
         <span>Song select can be found by hovering to the left edge of the screen</span>
 
         <h3>Controls</h3>
