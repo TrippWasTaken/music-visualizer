@@ -1,149 +1,210 @@
 <script lang="ts">
-import { onMount, src_url_equal } from "svelte/internal";
+    import Player from "./Player.svelte";
+    import { spring } from "svelte/motion";
+    import { onMount } from "svelte";
+    import Cursor from "./cursor.svelte";
 
-	import * as THREE from "three"
+    const songs = [
+        {
+            name: "Us and Them",
+            artist: "Derek Pope",
+            src: "./media/song1.mp3",
+        },
+        {
+            name: "Vulnerable ft. Jady (prod. Sueco)",
+            artist: "JERHELL",
+            src: "./media/song2.mp3",
+        },
+        {
+            name: "Beyond It All, Lies Nothing But Isolation",
+            artist: "Solyeong",
+            src: "./media/song3.mp3",
+        },
+        {
+            name: "Do it (Amen)",
+            artist: "DJ МУДАК 2000",
+            src: "./media/song4.mp3",
+        },
+    ];
 
-	const song = "./media/song2.mp3"
-	let ref: Element
-	let audioDiv: HTMLMediaElement
-	const context = new window.AudioContext()
+    let currSong = songs[0];
+    let audioTag: HTMLMediaElement;
+    let time: number = 0;
+    let duration: any;
+    let paused = true;
+    let timer: number;
+    let timerWidth: number;
+    let curr: number = 0;
 
-	const resumeContext = () =>{
-		context.resume()
-	}
-
-	const getLoudness = (arr) =>{
-		var sum = 0;
-        for( var i = 0; i < arr.length; i ++ ) {
-            sum += arr[i];
+    let coords = spring(
+        { x: 50, y: 50 },
+        {
+            stiffness: 0.1,
+            damping: 0.25,
         }
-        return sum / arr.length;
-	}
-	
-	//Three set up
-	const scene = new THREE.Scene()
-	const camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.01, 5000)
-	camera.position.set(0, 0, 800)
-	const renderer = new THREE.WebGLRenderer({
-		antialias: true,
-		alpha: true,
-		preserveDrawingBuffer: true,
-	});
-	renderer.setClearColor(0x000000, 0)
-	renderer.setSize(window.innerWidth, window.innerHeight)
-	const lines = new THREE.Group()
-	
-	onMount(()=>{
-		//Audio set up
-        const analyser = context.createAnalyser()
-        const source = context.createMediaElementSource(audioDiv)
-        source.connect(analyser)
-        analyser.connect(context.destination)
-        analyser.smoothingTimeConstant = 0.9
-        analyser.minDecibels = -100
-        analyser.maxDecibels = -10
-        analyser.fftSize = 512
-        const bufferLength = analyser.frequencyBinCount
-        const dataArray = new Uint8Array(bufferLength)
-		
-		ref.appendChild(renderer.domElement)
+    );
 
-		//main
-		const addLines = () => {
-            let z = 0
-            for (let l = 0; l < 1000; l++) {
-                const material = new THREE.LineBasicMaterial()
-				const geometry = new THREE.BufferGeometry()
-                const line = new THREE.Line(geometry, material)
-                line.translateZ(z)
-                lines.add(line)
-                z -= 10
-            }
+    let size = spring(10);
+
+    const changeSong = (index: number) => {
+        currSong = songs[index];
+        curr = index;
+
+        let canPlay = audioTag.play();
+        if (canPlay != undefined) {
+            canPlay.then(() => {
+                audioTag.play();
+            });
         }
-        scene.add(lines);
-        const dataC = []
+    };
 
-        const moveL = (dataAudio) => {
-            const dataA = dataAudio
-            const dataB = dataAudio.slice().reverse()
-            const data = [...dataB, ...dataA]
-            const positions = new Float32Array(data.length * 3)
-            const loudness = Math.max(...dataAudio)
-            for (let i = dataC.length - 1; i > 0; i--) {
-                const current = lines.children[i].geometry.getAttribute('position')
-                const l = (dataC.length - i) / dataC.length * loudness
-                if (current) {
-                    current.array = dataC[i - 1]
-                    lines.children[i].material.color = new THREE.Color('hsl(' + l + ', 100%, 50%)')
-                    current.needsUpdate = true
-                } else {
-                    lines.children[i].geometry.setAttribute('position', new THREE.BufferAttribute(dataC[i - 1], 3))
-                }
-            }
-
-            for (let y = 0; y < data.length; y++) {
-                positions[3 * y + 1] = data[y]//y
-                positions[3 * y] = ((window.innerWidth) / (data.length) * y)   //x
-            }
-
-            lines.children[0].geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-            //lines.children[0].material.color = new THREE.Color('hsl(' + loudness + ', 100%, 50%)')
-
-            dataC.unshift(positions)
-            if (dataC.length > lines.children.length) {
-                dataC.pop()
-            }
+    const handleKey = (e: any) => {
+        if (e.code === "Space" || e.key === " ") {
+            if (paused) audioTag.play();
+            else audioTag.pause();
         }
+    };
 
-        let last = 0
-        const animate = (now: any) => {
-            if (!last || now - last >= 5) {
-                analyser.getByteFrequencyData(dataArray)
-                last = now
-                moveL(dataArray)
-            }
-			camera.rotation.z += getLoudness(dataArray)/(4096 * 2)
-            renderer.render(scene, camera)
-            requestAnimationFrame(animate)
-        };
-        
-        addLines()
-		lines.translateX(-window.innerWidth/2)
-		const lines2 = lines.clone();
-        lines2.rotation.z = Math.PI;
-		lines2.translateX(-window.innerWidth)
-        scene.add(lines2);
-        animate(last)
-	})
+    const handleClick = (e: any) => {
+        if (paused) audioTag.play();
+        else audioTag.pause();
+    };
 
+    const updateProgress = () => {
+        timer = (time / duration) * 100;
+        requestAnimationFrame(updateProgress);
+    };
 
+    const switchSong = () => {
+        curr++;
+        if (curr < songs.length) {
+            changeSong(curr);
+        } else {
+            curr = 0;
+            changeSong(curr);
+        }
+    };
+
+    const changeTime = (e) => {
+        const c = e.clientX;
+        const change = c / timerWidth;
+        time = duration * change;
+    };
+
+    const handleMove = (e: any) => {};
 </script>
 
+<svelte:window on:keydown={handleKey} on:mousemove={handleMove} />
+
 <main>
-	<section class="musicSect">
-		<section class="audioCanvas" bind:this={ref}>
+    <section class="songSelect">
+        {#each songs as song, index}
+            <div class="songWrapper" on:click={() => changeSong(index)}>
+                <span class="songArtist">{song.artist}</span> -
+                <span class="songName">{song.name}</span>
+            </div>
+        {/each}
+    </section>
 
-		</section>
+    <audio
+        id="songSource"
+        src={currSong.src}
+        bind:this={audioTag}
+        bind:currentTime={time}
+        bind:duration
+        bind:paused
+        on:playing={updateProgress}
+        on:ended={switchSong}
+    />
+    {#if audioTag != null}
+        <section
+            class="visArea"
+            on:click={handleClick}
+            bind:clientWidth={timerWidth}
+        >
+            <Player audioDiv={audioTag} />
+        </section>
+    {:else}
+        <h2>Loading player</h2>
+    {/if}
 
-		<div class="audioPlayer">
-			<audio id="songSource" src={song} controls on:play="{resumeContext}" bind:this={audioDiv}>
-			</audio>
-		</div>
-	</section>
+    <section class="audioControls">
+        <div class="progressBar" on:click={changeTime}>
+            <div class="nowPlaying">{currSong.artist} - {currSong.name}</div>
+            <div class="controlsProgress" style="width: {timer}%;" />
+        </div>
+    </section>
 </main>
 
-<style type="scss">
-	.musicSect{
-		height: 100%;
-		width: 100%;
-		overflow: hidden;
-		background: #C827B1;
-		background: radial-gradient(ellipse at center, #C827B1, #825E39);
-	}
-	
-	.audioCanvas{
-		width: 100vw;
-		height: 100vh;
-	}
+<style lang="scss">
+    @import url("https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
 
+    .visArea {
+        position: fixed;
+        width: 100vw;
+        height: 100vh;
+        z-index: 0;
+    }
+    .songWrapper {
+        font-family: "Montserrat", sans-serif;
+        color: white;
+        font-size: 18px;
+        font-weight: 500;
+        padding: 1rem;
+    }
+    .songSelect {
+        height: 100%;
+        width: 20%;
+        position: fixed;
+        z-index: 1;
+        top: 0;
+        left: 0;
+        transition: 0.5s;
+        transition-timing-function: cubic-bezier(0.5, 0, 1, 0.5);
+        padding: 10px;
+        transform: translateX(-95%);
+        opacity: 0%;
+        display: flex;
+        background: rgb(0, 0, 0);
+        background: radial-gradient(
+            circle,
+            rgba(0, 0, 0, 0.5) 0%,
+            rgba(0, 0, 0, 0.1) 100%
+        );
+        flex-direction: column;
+        justify-content: center;
+        backdrop-filter: blur(10px);
+        &:hover {
+            transform: translateX(0);
+            opacity: 1;
+            transition-timing-function: cubic-bezier(0, 0.5, 0.5, 1);
+        }
+    }
+
+    .audioControls {
+        position: fixed;
+        width: 100%;
+        position: fixed;
+        bottom: 0%;
+        left: 0;
+        color: white;
+    }
+
+    .progressBar {
+        z-index: 2;
+        opacity: 0.7;
+    }
+
+    .nowPlaying {
+        text-align: center;
+        font-size: 2rem;
+        font-weight: bolder;
+        opacity: 0.2;
+    }
+
+    .controlsProgress {
+        height: 0.5rem;
+        width: 0;
+        background-color: white;
+    }
 </style>
