@@ -1,14 +1,3 @@
-## Get started
+## Audio visualization using threejs
 
-Install the dependencies...
-
-```bash
-cd svelte-app
-npm install
-```
-
-...then start [Rollup](https://rollupjs.org):
-
-```bash
-npm run dev
-```
+live demo can be found [here](https://trippwastaken.github.io/music-visualizer/)
