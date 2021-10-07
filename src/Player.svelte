@@ -34,16 +34,6 @@
     let timerWidth: number;
     let curr: number = 0;
 
-    let coords = spring(
-        { x: 50, y: 50 },
-        {
-            stiffness: 0.1,
-            damping: 0.25,
-        }
-    );
-
-    let size = spring(10);
-
     const changeSong = (index: number) => {
         currSong = songs[index];
         curr = index;
@@ -89,11 +79,9 @@
         const change = c / timerWidth;
         time = duration * change;
     };
-
-    const handleMove = (e: any) => {};
 </script>
 
-<svelte:window on:keydown={handleKey} on:mousemove={handleMove}/>
+<svelte:window on:keydown={handleKey}/>
 
 <main>
     <section class="songSelect">
@@ -121,7 +109,7 @@
             on:click={handleClick}
             bind:clientWidth={timerWidth}
         >
-            <Player audioDiv={audioTag} />
+                <Player audioDiv={audioTag}> </Player>
         </section>
     {:else}
         <h2>Loading player</h2>
@@ -164,12 +152,6 @@
         transform: translateX(-95%);
         opacity: 0%;
         display: flex;
-        background: rgb(0, 0, 0);
-        background: radial-gradient(
-            circle,
-            rgba(0, 0, 0, 0.5) 0%,
-            rgba(0, 0, 0, 0.1) 100%
-        );
         flex-direction: column;
         justify-content: center;
         backdrop-filter: blur(10px);
@@ -190,7 +172,7 @@
     }
 
     .progressBar {
-        z-index: 2;
+        z-index: 1;
         opacity: 0.7;
     }
 

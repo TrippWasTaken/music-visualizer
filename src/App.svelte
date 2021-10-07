@@ -1,5 +1,6 @@
 <script lang="ts">
     import { fade } from 'svelte/transition';
+import Cursor from './Cursor.svelte';
     import Player from "./player.svelte";
 
     let action = false
@@ -8,18 +9,19 @@
     }
 </script>
 <main>
+    <Cursor />
     {#if !action}
     <div class="pageStart" on:click|once = {() => init()} transition:fade>
         <h1>Welcome</h1>
         <span><b>Click</b> on the screen to start the Visualizer</span>
         <span>Song select can be found by hovering to the left edge of the screen</span>
-
+        
         <h3>Controls</h3>
         <span><b>Space</b>: Play/Pause</span>
     </div>
     {:else}
     <section transition:fade>
-        <Player></Player>
+        <Player />
     </section>
     {/if}
 </main>
@@ -40,5 +42,7 @@
 
     :global(body){
         background-color: black;
+        overflow: hidden;
+        cursor: none;
     }
 </style>
