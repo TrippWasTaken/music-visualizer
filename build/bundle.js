@@ -698,166 +698,8 @@ var app = (function () {
         };
     }
 
-    const subscriber_queue = [];
-    /**
-     * Create a `Writable` store that allows both updating and reading by subscription.
-     * @param {*=}value initial value
-     * @param {StartStopNotifier=}start start and stop notifications for subscriptions
-     */
-    function writable(value, start = noop) {
-        let stop;
-        const subscribers = new Set();
-        function set(new_value) {
-            if (safe_not_equal(value, new_value)) {
-                value = new_value;
-                if (stop) { // store is ready
-                    const run_queue = !subscriber_queue.length;
-                    for (const subscriber of subscribers) {
-                        subscriber[1]();
-                        subscriber_queue.push(subscriber, value);
-                    }
-                    if (run_queue) {
-                        for (let i = 0; i < subscriber_queue.length; i += 2) {
-                            subscriber_queue[i][0](subscriber_queue[i + 1]);
-                        }
-                        subscriber_queue.length = 0;
-                    }
-                }
-            }
-        }
-        function update(fn) {
-            set(fn(value));
-        }
-        function subscribe(run, invalidate = noop) {
-            const subscriber = [run, invalidate];
-            subscribers.add(subscriber);
-            if (subscribers.size === 1) {
-                stop = start(set) || noop;
-            }
-            run(value);
-            return () => {
-                subscribers.delete(subscriber);
-                if (subscribers.size === 0) {
-                    stop();
-                    stop = null;
-                }
-            };
-        }
-        return { set, update, subscribe };
-    }
-
-    function is_date(obj) {
-        return Object.prototype.toString.call(obj) === '[object Date]';
-    }
-
-    function tick_spring(ctx, last_value, current_value, target_value) {
-        if (typeof current_value === 'number' || is_date(current_value)) {
-            // @ts-ignore
-            const delta = target_value - current_value;
-            // @ts-ignore
-            const velocity = (current_value - last_value) / (ctx.dt || 1 / 60); // guard div by 0
-            const spring = ctx.opts.stiffness * delta;
-            const damper = ctx.opts.damping * velocity;
-            const acceleration = (spring - damper) * ctx.inv_mass;
-            const d = (velocity + acceleration) * ctx.dt;
-            if (Math.abs(d) < ctx.opts.precision && Math.abs(delta) < ctx.opts.precision) {
-                return target_value; // settled
-            }
-            else {
-                ctx.settled = false; // signal loop to keep ticking
-                // @ts-ignore
-                return is_date(current_value) ?
-                    new Date(current_value.getTime() + d) : current_value + d;
-            }
-        }
-        else if (Array.isArray(current_value)) {
-            // @ts-ignore
-            return current_value.map((_, i) => tick_spring(ctx, last_value[i], current_value[i], target_value[i]));
-        }
-        else if (typeof current_value === 'object') {
-            const next_value = {};
-            for (const k in current_value) {
-                // @ts-ignore
-                next_value[k] = tick_spring(ctx, last_value[k], current_value[k], target_value[k]);
-            }
-            // @ts-ignore
-            return next_value;
-        }
-        else {
-            throw new Error(`Cannot spring ${typeof current_value} values`);
-        }
-    }
-    function spring(value, opts = {}) {
-        const store = writable(value);
-        const { stiffness = 0.15, damping = 0.8, precision = 0.01 } = opts;
-        let last_time;
-        let task;
-        let current_token;
-        let last_value = value;
-        let target_value = value;
-        let inv_mass = 1;
-        let inv_mass_recovery_rate = 0;
-        let cancel_task = false;
-        function set(new_value, opts = {}) {
-            target_value = new_value;
-            const token = current_token = {};
-            if (value == null || opts.hard || (spring.stiffness >= 1 && spring.damping >= 1)) {
-                cancel_task = true; // cancel any running animation
-                last_time = now$1();
-                last_value = new_value;
-                store.set(value = target_value);
-                return Promise.resolve();
-            }
-            else if (opts.soft) {
-                const rate = opts.soft === true ? .5 : +opts.soft;
-                inv_mass_recovery_rate = 1 / (rate * 60);
-                inv_mass = 0; // infinite mass, unaffected by spring forces
-            }
-            if (!task) {
-                last_time = now$1();
-                cancel_task = false;
-                task = loop(now => {
-                    if (cancel_task) {
-                        cancel_task = false;
-                        task = null;
-                        return false;
-                    }
-                    inv_mass = Math.min(inv_mass + inv_mass_recovery_rate, 1);
-                    const ctx = {
-                        inv_mass,
-                        opts: spring,
-                        settled: true,
-                        dt: (now - last_time) * 60 / 1000
-                    };
-                    const next_value = tick_spring(ctx, last_value, value, target_value);
-                    last_time = now;
-                    last_value = value;
-                    store.set(value = next_value);
-                    if (ctx.settled) {
-                        task = null;
-                    }
-                    return !ctx.settled;
-                });
-            }
-            return new Promise(fulfil => {
-                task.promise.then(() => {
-                    if (token === current_token)
-                        fulfil();
-                });
-            });
-        }
-        const spring = {
-            set,
-            update: (fn, opts) => set(fn(target_value, value), opts),
-            subscribe: store.subscribe,
-            stiffness,
-            damping,
-            precision
-        };
-        return spring;
-    }
-
     /* src\Cursor.svelte generated by Svelte v3.42.6 */
+
     const file$3 = "src\\Cursor.svelte";
 
     function create_fragment$3(ctx) {
@@ -871,8 +713,8 @@ var app = (function () {
     			main = element("main");
     			div = element("div");
     			attr_dev(div, "class", "cursor svelte-1u8no2y");
-    			add_location(div, file$3, 18, 4, 506);
-    			add_location(main, file$3, 17, 0, 494);
+    			add_location(div, file$3, 16, 4, 442);
+    			add_location(main, file$3, 15, 0, 430);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -917,7 +759,6 @@ var app = (function () {
     function instance$3($$self, $$props, $$invalidate) {
     	let { $$slots: slots = {}, $$scope } = $$props;
     	validate_slots('Cursor', slots, []);
-    	let size = spring(1);
     	let cursor;
 
     	const moveCur = e => {
@@ -947,17 +788,9 @@ var app = (function () {
     		});
     	}
 
-    	$$self.$capture_state = () => ({
-    		spring,
-    		size,
-    		cursor,
-    		moveCur,
-    		mUp,
-    		mDown
-    	});
+    	$$self.$capture_state = () => ({ cursor, moveCur, mUp, mDown });
 
     	$$self.$inject_state = $$props => {
-    		if ('size' in $$props) size = $$props.size;
     		if ('cursor' in $$props) $$invalidate(0, cursor = $$props.cursor);
     	};
 
@@ -52353,8 +52186,8 @@ var app = (function () {
     			main = element("main");
     			section = element("section");
     			attr_dev(section, "class", "audioCanvas svelte-oygwhn");
-    			add_location(section, file$2, 123, 4, 4312);
-    			add_location(main, file$2, 122, 0, 4300);
+    			add_location(section, file$2, 120, 4, 4238);
+    			add_location(main, file$2, 119, 0, 4226);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -52423,12 +52256,8 @@ var app = (function () {
     		return sum / arr.length;
     	};
 
-    	//console.log(audioDiv)
     	onMount(() => {
-    		//Audio set up
-    		//console.log(audioDiv)
     		const analyser = context.createAnalyser();
-
     		const source = context.createMediaElementSource(audioDiv);
     		source.connect(analyser);
     		analyser.connect(context.destination);
@@ -52614,7 +52443,7 @@ var app = (function () {
     	return child_ctx;
     }
 
-    // (82:8) {#each songs as song, index}
+    // (81:8) {#each songs as song, index}
     function create_each_block(ctx) {
     	let div;
     	let span0;
@@ -52642,11 +52471,11 @@ var app = (function () {
     			t2 = text(t2_value);
     			t3 = space();
     			attr_dev(span0, "class", "songArtist");
-    			add_location(span0, file$1, 83, 16, 1912);
+    			add_location(span0, file$1, 82, 16, 1888);
     			attr_dev(span1, "class", "songName");
-    			add_location(span1, file$1, 84, 16, 1977);
-    			attr_dev(div, "class", "songWrapper svelte-axa7kd");
-    			add_location(div, file$1, 82, 12, 1834);
+    			add_location(span1, file$1, 83, 16, 1953);
+    			attr_dev(div, "class", "songWrapper svelte-18dagks");
+    			add_location(div, file$1, 81, 12, 1810);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, div, anchor);
@@ -52676,14 +52505,14 @@ var app = (function () {
     		block,
     		id: create_each_block.name,
     		type: "each",
-    		source: "(82:8) {#each songs as song, index}",
+    		source: "(81:8) {#each songs as song, index}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (108:4) {:else}
+    // (107:4) {:else}
     function create_else_block$1(ctx) {
     	let h2;
 
@@ -52691,7 +52520,7 @@ var app = (function () {
     		c: function create() {
     			h2 = element("h2");
     			h2.textContent = "Loading player";
-    			add_location(h2, file$1, 108, 8, 2585);
+    			add_location(h2, file$1, 107, 8, 2549);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, h2, anchor);
@@ -52708,14 +52537,14 @@ var app = (function () {
     		block,
     		id: create_else_block$1.name,
     		type: "else",
-    		source: "(108:4) {:else}",
+    		source: "(107:4) {:else}",
     		ctx
     	});
 
     	return block;
     }
 
-    // (100:4) {#if audioTag != null}
+    // (99:4) {#if audioTag != null}
     function create_if_block$1(ctx) {
     	let section;
     	let player;
@@ -52733,9 +52562,9 @@ var app = (function () {
     		c: function create() {
     			section = element("section");
     			create_component(player.$$.fragment);
-    			attr_dev(section, "class", "visArea svelte-axa7kd");
+    			attr_dev(section, "class", "visArea svelte-18dagks");
     			add_render_callback(() => /*section_elementresize_handler*/ ctx[19].call(section));
-    			add_location(section, file$1, 100, 8, 2359);
+    			add_location(section, file$1, 99, 8, 2335);
     		},
     		m: function mount(target, anchor) {
     			insert_dev(target, section, anchor);
@@ -52775,7 +52604,7 @@ var app = (function () {
     		block,
     		id: create_if_block$1.name,
     		type: "if",
-    		source: "(100:4) {#if audioTag != null}",
+    		source: "(99:4) {#if audioTag != null}",
     		ctx
     	});
 
@@ -52860,22 +52689,22 @@ var app = (function () {
     			t5 = text(t5_value);
     			t6 = space();
     			div1 = element("div");
-    			attr_dev(section0, "class", "songSelect svelte-axa7kd");
-    			add_location(section0, file$1, 80, 4, 1754);
+    			attr_dev(section0, "class", "songSelect svelte-18dagks");
+    			add_location(section0, file$1, 79, 4, 1730);
     			attr_dev(audio, "id", "songSource");
     			if (!src_url_equal(audio.src, audio_src_value = /*currSong*/ ctx[0].src)) attr_dev(audio, "src", audio_src_value);
     			if (/*duration*/ ctx[3] === void 0) add_render_callback(() => /*audio_durationchange_handler*/ ctx[17].call(audio));
-    			add_location(audio, file$1, 89, 4, 2079);
-    			attr_dev(div0, "class", "nowPlaying svelte-axa7kd");
-    			add_location(div0, file$1, 113, 12, 2729);
-    			attr_dev(div1, "class", "controlsProgress svelte-axa7kd");
+    			add_location(audio, file$1, 88, 4, 2055);
+    			attr_dev(div0, "class", "nowPlaying svelte-18dagks");
+    			add_location(div0, file$1, 112, 12, 2693);
+    			attr_dev(div1, "class", "controlsProgress svelte-18dagks");
     			set_style(div1, "width", /*timer*/ ctx[5] + "%");
-    			add_location(div1, file$1, 114, 12, 2808);
-    			attr_dev(div2, "class", "progressBar svelte-axa7kd");
-    			add_location(div2, file$1, 112, 8, 2668);
-    			attr_dev(section1, "class", "audioControls svelte-axa7kd");
-    			add_location(section1, file$1, 111, 4, 2627);
-    			add_location(main, file$1, 79, 0, 1742);
+    			add_location(div1, file$1, 113, 12, 2772);
+    			attr_dev(div2, "class", "progressBar svelte-18dagks");
+    			add_location(div2, file$1, 111, 8, 2632);
+    			attr_dev(section1, "class", "audioControls svelte-18dagks");
+    			add_location(section1, file$1, 110, 4, 2591);
+    			add_location(main, file$1, 78, 0, 1718);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
