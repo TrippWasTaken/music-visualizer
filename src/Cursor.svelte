@@ -1,10 +1,8 @@
 <script lang="ts">
-    import { spring } from 'svelte/motion';
-    let size = spring(1);
 
-    let cursor
+    let cursor: HTMLDivElement
     
-    const moveCur = (e) =>{
+    const moveCur = (e: MouseEvent) =>{
         const x =  e.x
         const y = e.y
         cursor.setAttribute("style", "top: " + (y - 10)+ "px; left: " + (x - 10) + "px;")

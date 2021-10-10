@@ -1,6 +1,6 @@
 <script lang="ts">
+    
     import Player from "./Visuals.svelte";
-    import { spring } from "svelte/motion";
 
     const songs = [
         {
@@ -50,7 +50,6 @@
         if (e.code === "Space" || e.key === " ") {
             if (paused) audioTag.play();
             else audioTag.pause();
-            
         }
     };
 
@@ -74,14 +73,14 @@
         }
     };
 
-    const changeTime = (e) => {
+    const changeTime = (e: any) => {
         const c = e.clientX;
         const change = c / timerWidth;
         time = duration * change;
     };
 </script>
 
-<svelte:window on:keydown={handleKey}/>
+<svelte:window on:keydown={handleKey} />
 
 <main>
     <section class="songSelect">
@@ -109,7 +108,7 @@
             on:click={handleClick}
             bind:clientWidth={timerWidth}
         >
-                <Player audioDiv={audioTag}> </Player>
+            <Player audioDiv={audioTag} />
         </section>
     {:else}
         <h2>Loading player</h2>
@@ -146,20 +145,29 @@
         z-index: 1;
         top: 0;
         left: 0;
+        opacity: 0;
         transition: 0.5s;
         transition-timing-function: cubic-bezier(0.5, 0, 1, 0.5);
         padding: 10px;
         transform: translateX(-95%);
-        opacity: 0%;
         display: flex;
         flex-direction: column;
         justify-content: center;
         backdrop-filter: blur(10px);
+        border-right: 1rem solid white;
         &:hover {
             transform: translateX(0);
             opacity: 1;
             transition-timing-function: cubic-bezier(0, 0.5, 0.5, 1);
         }
+    }
+    .songSelect:not(:hover){
+        animation: anim 5s ease-out;
+    }
+
+    @keyframes anim{
+        from {opacity: 100%;}
+        to {opacity: 0;}
     }
 
     .audioControls {

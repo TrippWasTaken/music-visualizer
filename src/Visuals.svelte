@@ -40,11 +40,8 @@
         }
         return sum / arr.length;
     };
-
-    //console.log(audioDiv)
+    
     onMount(() => {
-        //Audio set up
-        //console.log(audioDiv)
         const analyser = context.createAnalyser();
         const source = context.createMediaElementSource(audioDiv);
         source.connect(analyser);
