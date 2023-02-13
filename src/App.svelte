@@ -15,9 +15,11 @@ import Cursor from './Cursor.svelte';
         <h1>Welcome</h1>
         <span><b>Click</b> on the screen to start the Visualizer</span>
         <span>Song select can be found by hovering to the left edge of the screen</span>
+        <span>For best performace make sure Hardware <b>acceleration is turned on</b></span>
         
         <h3>Controls</h3>
-        <span><b>Space</b>: Play/Pause</span>
+        <span><b>Space/Mouse Click</b>: Play/Pause</span>
+        <span>click on the bottom progressbar area to skip through song</span>
     </div>
     {:else}
     <section transition:fade>

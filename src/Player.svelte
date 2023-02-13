@@ -4,24 +4,24 @@
 
     const songs = [
         {
-            name: "Us and Them",
-            artist: "Derek Pope",
-            src: "./media/song1.mp3",
+            name: "Life and its end",
+            artist: "Solyeong",
+            src: "./media/1.mp3",
         },
         {
-            name: "Vulnerable ft. Jady (prod. Sueco)",
-            artist: "JERHELL",
-            src: "./media/song2.mp3",
+            name: "人生の不思議",
+            artist: "solyeong",
+            src: "./media/2.mp3",
         },
         {
             name: "Beyond It All, Lies Nothing But Isolation",
             artist: "Solyeong",
-            src: "./media/song3.mp3",
+            src: "./media/3.mp3",
         },
         {
-            name: "Do it (Amen)",
-            artist: "DJ МУДАК 2000",
-            src: "./media/song4.mp3",
+            name: "I MISS THE RAGE",
+            artist: "Solyeong ft. Mario Judah",
+            src: "./media/4.mp3",
         },
     ];
 
